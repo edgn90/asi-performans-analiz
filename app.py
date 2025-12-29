@@ -22,15 +22,28 @@ def to_excel(df):
     processed_data = output.getvalue()
     return processed_data
 
-# 2. PDF İndirme Fonksiyonu (Türkçe Karakter Destekli Basit Yapı)
+# 2. PDF İndirme Fonksiyonu (Logolu ve Türkçe Karakter Destekli)
 def create_pdf(df, title):
     class PDF(FPDF):
         def header(self):
+            # Logoyu ekle (x=10, y=8, w=33 - Oran korunur)
+            # Logo dosyasının 'logo.png' adıyla proje klasöründe olduğunu varsayıyoruz.
+            try:
+                self.image('logo.png', 10, 8, 33)
+            except:
+                pass # Logo dosyası yoksa hata verme
+            
             self.set_font('Arial', 'B', 12)
+            # Başlığı ortala ve logodan sonra boşluk bırak
             self.cell(0, 10, clean_text(title), 0, 1, 'C')
-            self.ln(5)
+            self.ln(15) # Logodan sonra boşluk
 
-    # Türkçe karakterleri İngilizce karşılıklarına çevir (Font dosyası olmadan çalışması için)
+        def footer(self):
+            self.set_y(-15)
+            self.set_font('Arial', 'I', 8)
+            self.cell(0, 10, f'Sayfa {self.page_no()}', 0, 0, 'C')
+
+    # Türkçe karakterleri İngilizce karşılıklarına çevir
     def clean_text(text):
         if not isinstance(text, str): return str(text)
         replacements = {
@@ -42,11 +55,12 @@ def create_pdf(df, title):
         return text.encode('latin-1', 'replace').decode('latin-1')
 
     pdf = PDF()
+    pdf.alias_nb_pages()
     pdf.add_page()
     pdf.set_font("Arial", size=10)
 
     # Tablo Başlıkları
-    col_width = 190 / len(df.columns) # Sayfa genişliğini sütun sayısına böl
+    col_width = 190 / len(df.columns)
     pdf.set_font("Arial", 'B', 10)
     for col in df.columns:
         pdf.cell(col_width, 10, clean_text(col), 1, 0, 'C')
@@ -62,9 +76,18 @@ def create_pdf(df, title):
     return pdf.output(dest='S').encode('latin-1')
 
 # -----------------------------------------------------------------------------
-# SAYFA AYARLARI
+# SAYFA AYARLARI VE LOGO
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="Aşı Performans Sistemi", layout="wide")
+
+# Yan Menüye Logo Ekleme (Tüm sayfalarda görünür)
+with st.sidebar:
+    try:
+        # Genişlik 150px olarak ayarlandı, responsive davranır.
+        st.image("logo.png", width=150)
+    except:
+        st.warning("Logo dosyası (logo.png) bulunamadı.")
+    
 st.title("📊 Aşı Takip & Performans Dashboard")
 st.markdown("---")
 
@@ -76,6 +99,9 @@ uploaded_file = st.sidebar.file_uploader("Excel veya CSV Yükleyin", type=["xlsx
 
 if uploaded_file:
     try:
+        # ... (Veri Okuma ve İşleme Kodları Aynı Kalacak) ...
+        # (Kısalık için burayı atlıyorum, önceki kodun aynısı)
+        
         # Veri Okuma
         if uploaded_file.name.endswith('.csv'):
             df = pd.read_csv(uploaded_file, encoding='cp1254')
