@@ -91,8 +91,9 @@ if uploaded_file:
     tab1, tab2, tab3 = st.tabs(["Birim Performans", "Düşük Oranlılar", "Riskli ASM Listesi"])
 
     with tab1:
-        st.dataframe(ozet.style.background_gradient(subset=['oran'], cmap='RdYlGn'), use_container_width=True)
-
+      # Stil işlemini değişkene alıp öyle gösterelim
+styler = ozet.style.background_gradient(subset=['oran'], cmap='RdYlGn')
+st.dataframe(styler, use_container_width=True)
     with tab2:
         low_units = ozet[ozet['oran'] < min_val]
         st.write(f"Alt sınır olan %{min_val} altında kalan {len(low_units)} birim bulundu.")
@@ -107,4 +108,5 @@ if uploaded_file:
         st.write(pd.DataFrame(riskli_asmler))
 
 else:
+
     st.info("Lütfen analiz için bir Excel veya CSV dosyası yükleyin.")
