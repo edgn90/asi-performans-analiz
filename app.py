@@ -2,77 +2,93 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-# Sayfa Ayarları
-st.set_page_config(page_title="Aşı Performans Sistemi", layout="wide")
+# -----------------------------------------------------------------------------
+# 1. SAYFA AYARLARI
+# -----------------------------------------------------------------------------
+st.set_page_config(
+    page_title="Aşı Performans Sistemi",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
 st.title("📊 Aşı Takip & Performans Dashboard")
 st.markdown("---")
 
-# Yan Menü (Filtreler)
+# -----------------------------------------------------------------------------
+# 2. YAN MENÜ VE DOSYA YÜKLEME
+# -----------------------------------------------------------------------------
 st.sidebar.header("1. Ayarlar & Veri")
 uploaded_file = st.sidebar.file_uploader("Excel veya CSV Yükleyin", type=["xlsx", "csv"])
 
+# -----------------------------------------------------------------------------
+# 3. ANA MANTIK (Dosya yüklendiyse çalışır)
+# -----------------------------------------------------------------------------
 if uploaded_file:
-    # 1. Veri Okuma
     try:
+        # --- A) Veri Okuma ---
         if uploaded_file.name.endswith('.csv'):
             df = pd.read_csv(uploaded_file, encoding='cp1254')
         else:
             df = pd.read_excel(uploaded_file)
             
-        # Sütun Temizliği
+        # Sütun isimlerini temizle (boşlukları sil)
         df.columns = [c.strip() for c in df.columns]
-        # Standart İsimlendirme
+
+        # Sütunları standart isimlere çevir
         rename_map = {
             'ILCE': 'ilce', 'asm': 'asm', 'BIRIM_ADI': 'birim',
             'ASI_SON_TARIH': 'hedef_tarih', 'ASI_YAP_TARIH': 'yapilan_tarih', 'ASI_DOZU': 'doz'
         }
-        # Sadece var olan sütunları değiştir
+        # Sadece dosyada var olan sütunları değiştir
         df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
 
-        # Tarih Formatlama
+        # Tarih formatlama
         df['hedef_tarih'] = pd.to_datetime(df['hedef_tarih'], errors='coerce')
         df['yapilan_tarih'] = pd.to_datetime(df['yapilan_tarih'], errors='coerce')
+        # Hedef tarihi olmayan (boş) satırları at
         df = df.dropna(subset=['hedef_tarih'])
 
-        # 2. Filtreler
+        # --- B) Filtreler ---
         min_date = df['hedef_tarih'].min().date()
         max_date = df['hedef_tarih'].max().date()
         
-        # Eğer tarih verisi yoksa hata vermesin diye kontrol
         if pd.isnull(min_date) or pd.isnull(max_date):
              st.error("Dosyada geçerli tarih verisi bulunamadı.")
              st.stop()
 
         date_range = st.sidebar.date_input("Analiz Tarih Aralığı", [min_date, max_date])
         
+        # Kullanıcı hedefleri
         target_val = st.sidebar.number_input("Hedef Başarı (Yeşil %)", value=90)
         min_val = st.sidebar.number_input("Alt Sınır (Kırmızı %)", value=70)
 
-        # 3. Hesaplama ve Filtreleme
-        if len(date_range) == 2:
+        # Tarih filtresini uygula
+        if isinstance(date_range, list) and len(date_range) == 2:
             mask = (df['hedef_tarih'].dt.date >= date_range[0]) & (df['hedef_tarih'].dt.date <= date_range[1])
             df_filtered = df[mask].copy()
         else:
             df_filtered = df.copy()
 
+        # Başarı durumu: Yapılan tarih doluysa 1, boşsa 0
         df_filtered['basari_durumu'] = df_filtered['yapilan_tarih'].notna().astype(int)
 
-        # --- KPI KARTLARI ---
+        # --- C) Hesaplamalar ---
         total_target = len(df_filtered)
         total_done = df_filtered['basari_durumu'].sum()
         
-        # Ana Özet Tablosu
+        # Birim bazlı özet tablo
         ozet = df_filtered.groupby(['ilce', 'asm', 'birim']).agg(
             toplam=('basari_durumu', 'count'),
             yapilan=('basari_durumu', 'sum')
         ).reset_index()
         
+        # Oran hesabı
         ozet['oran'] = (ozet['yapilan'] / ozet['toplam'] * 100).round(2)
         
+        # Riskli birim sayısı
         riskli_sayisi = len(ozet[ozet['oran'] < min_val])
 
-        # Kartları Göster
+        # --- D) KPI Kartları ---
         col1, col2, col3 = st.columns(3)
         col1.metric("🔵 Toplam Hedef", f"{total_target:,}".replace(",", "."))
         col2.metric("🟢 Toplam Yapılan", f"{total_done:,}".replace(",", "."))
@@ -80,14 +96,14 @@ if uploaded_file:
 
         st.markdown("---")
 
-        # --- GRAFİKLER ---
+        # --- E) Grafikler ---
         g1, g2 = st.columns(2)
 
         # Grafik 1: İlçe Performansı
         ilce_ozet = ozet.groupby('ilce').agg({'toplam':'sum', 'yapilan':'sum'}).reset_index()
         ilce_ozet['oran'] = (ilce_ozet['yapilan'] / ilce_ozet['toplam'] * 100).round(2)
         
-        # Renkleri Belirle
+        # Renk koşulları
         ilce_ozet['Renk'] = ilce_ozet['oran'].apply(lambda x: 'Yeşil' if x >= target_val else ('Sarı' if x >= min_val else 'Kırmızı'))
         color_map = {'Yeşil':'#198754', 'Sarı':'#ffc107', 'Kırmızı':'#dc3545'}
         
@@ -107,18 +123,18 @@ if uploaded_file:
         fig_line = px.line(trend, x='AY', y='ORAN', title="Zaman Serisi Başarı Trendi (%)", markers=True)
         g2.plotly_chart(fig_line, use_container_width=True)
 
-        # --- TABLOLAR (SEKMELİ YAPI) ---
+        # --- F) Detaylı Tablolar ---
         st.subheader("📋 Detaylı Tablolar")
         tab1, tab2, tab3 = st.tabs(["📊 Birim Performans", "⚠️ Düşük Oranlılar", "🚨 Riskli ASM'ler"])
 
         with tab1:
-            st.info("İpucu: Sütun başlıklarına tıklayarak sıralama yapabilirsiniz.")
-            # HATA VEREN KISIM BU YENİ YÖNTEMLE DEĞİŞTİRİLDİ 👇
+            st.caption("Not: Tabloda başarı oranları doluluk çubuğu olarak gösterilmektedir.")
+            # İŞTE HATA VERMEYEN YENİ YÖNTEM BURASI:
             st.dataframe(
                 ozet,
                 column_config={
                     "oran": st.column_config.ProgressColumn(
-                        "Başarı Oranı (%)",
+                        "Başarı Oranı",
                         format="%.2f%%",
                         min_value=0,
                         max_value=100,
