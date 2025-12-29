@@ -1,15 +1,40 @@
-# 2. Gelişmiş PDF İndirme Fonksiyonu (Yatay Mod + Otomatik Genişlik)
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import io
+from fpdf import FPDF
+import xlsxwriter
+
+# -----------------------------------------------------------------------------
+# 1. YARDIMCI FONKSİYONLAR
+# -----------------------------------------------------------------------------
+
+def to_excel(df):
+    """Veriyi Excel formatına çevirir."""
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Sheet1')
+        worksheet = writer.sheets['Sheet1']
+        for i, col in enumerate(df.columns):
+            # Sütun genişliğini içeriğe göre ayarla
+            max_len = max(df[col].astype(str).map(len).max(), len(col)) + 2
+            worksheet.set_column(i, i, max_len)
+    return output.getvalue()
+
 def create_pdf(df, title):
+    """
+    Veriyi PDF formatına çevirir.
+    Özellikler: Yatay Mod (Landscape), Akıllı Sütun Genişliği, Metin Kısaltma.
+    """
     class PDF(FPDF):
         def header(self):
             try:
-                # Logo genişliği ve konumu (Yatay mod için ayarlandı)
+                # Logo (x=10, y=8, w=33)
                 self.image('logo.png', 10, 8, 33)
             except:
                 pass
             
             self.set_font('Arial', 'B', 14)
-            # Başlığı ortala
             self.cell(0, 10, clean_text(title), 0, 1, 'C')
             self.ln(12)
 
@@ -19,6 +44,7 @@ def create_pdf(df, title):
             self.cell(0, 10, f'Sayfa {self.page_no()}', 0, 0, 'C')
 
     def clean_text(text):
+        """Türkçe karakterleri Latin-1 uyumlu hale getirir."""
         if not isinstance(text, str): return str(text)
         replacements = {
             'ğ': 'g', 'Ğ': 'G', 'ş': 's', 'Ş': 'S', 'ı': 'i', 'İ': 'I', 
@@ -28,22 +54,19 @@ def create_pdf(df, title):
             text = text.replace(tr, eng)
         return text.encode('latin-1', 'replace').decode('latin-1')
 
-    # YATAY (Landscape) Modu Başlatıyoruz ('L')
+    # YATAY (Landscape) Modu Başlat ('L')
     pdf = PDF(orientation='L', unit='mm', format='A4')
     pdf.alias_nb_pages()
     pdf.add_page()
     
     # --- AKILLI SÜTUN GENİŞLİĞİ HESAPLAMA ---
-    # Sayfa genişliği (A4 Yatay = 297mm, kenar boşlukları düşünce ~275mm kullanılabilir)
-    available_width = 275
+    available_width = 275 # A4 Yatay kullanılabilir alan
     
     # Her sütundaki en uzun veriyi bul
     max_lens = []
     for col in df.columns:
-        # Başlık uzunluğu
-        max_l = len(str(col))
-        # Veri uzunlukları (İlk 50 satırı kontrol etsek yeterli, performans için)
-        for val in df[col].head(50):
+        max_l = len(str(col)) # Başlık uzunluğu
+        for val in df[col].head(50): # İlk 50 satırı kontrol et (performans için)
             val_l = len(str(val))
             if val_l > max_l:
                 max_l = val_l
@@ -51,40 +74,37 @@ def create_pdf(df, title):
     
     total_len = sum(max_lens)
     
-    # Her sütuna, içeriğinin uzunluğu oranında genişlik ver
+    # Genişlikleri dağıt
     col_widths = []
     for l in max_lens:
-        # Formül: (Sütun Max Uzunluk / Toplam Karakter) * Sayfa Genişliği
         w = (l / total_len) * available_width
-        # Çok dar sütunları engellemek için minimum 15mm verelim
-        if w < 15: w = 15
+        if w < 15: w = 15 # Minimum genişlik
         col_widths.append(w)
         
-    # Genişlikleri tekrar normalize et (Minimum eklemeler taşma yapmasın diye)
+    # Genişlikleri normalize et (Taşmayı önle)
     final_total = sum(col_widths)
     if final_total > available_width:
         factor = available_width / final_total
         col_widths = [w * factor for w in col_widths]
 
     # --- TABLO BAŞLIKLARI ---
-    pdf.set_font("Arial", 'B', 9) # Başlık fontu
-    # Gri arka plan ekleyelim (görsellik için)
-    pdf.set_fill_color(200, 220, 255) 
+    pdf.set_font("Arial", 'B', 9)
+    pdf.set_fill_color(220, 230, 240) # Açık mavi başlık
     
     for i, col in enumerate(df.columns):
         pdf.cell(col_widths[i], 10, clean_text(col), 1, 0, 'C', fill=True)
     pdf.ln()
 
     # --- TABLO VERİLERİ ---
-    pdf.set_font("Arial", size=8) # Veri fontunu biraz küçültelim
+    pdf.set_font("Arial", size=8)
     
     for _, row in df.iterrows():
-        # Satır taşmasını önlemek için sayfa sonu kontrolü
-        if pdf.get_y() > 180: # Sayfa sonuna yaklaştıysa
+        # Sayfa sonu kontrolü
+        if pdf.get_y() > 180:
             pdf.add_page()
             # Başlıkları tekrar bas
             pdf.set_font("Arial", 'B', 9)
-            pdf.set_fill_color(200, 220, 255)
+            pdf.set_fill_color(220, 230, 240)
             for i, col in enumerate(df.columns):
                 pdf.cell(col_widths[i], 10, clean_text(col), 1, 0, 'C', fill=True)
             pdf.ln()
@@ -92,12 +112,9 @@ def create_pdf(df, title):
 
         # Hücreleri yaz
         for i, item in enumerate(row):
-            # Hücre içeriğini kısalt (aşırı uzun metinler yine de taşmasın)
             text = clean_text(str(item))
-            
-            # Basit taşma önlemi: Eğer metin hücre genişliğinden çok fazlaysa kırp
-            # Yaklaşık olarak 1mm = 2-3 karakter (fonta göre değişir)
-            max_char = int(col_widths[i] / 2) + 2 
+            # Basit taşma önlemi (Kırpma)
+            max_char = int(col_widths[i] / 1.8) 
             if len(text) > max_char:
                 text = text[:max_char-2] + ".."
                 
@@ -105,3 +122,240 @@ def create_pdf(df, title):
         pdf.ln()
 
     return pdf.output(dest='S').encode('latin-1')
+
+# -----------------------------------------------------------------------------
+# 2. SAYFA AYARLARI
+# -----------------------------------------------------------------------------
+st.set_page_config(page_title="Aşı Performans Sistemi", layout="wide")
+
+# Sol Menü Logosu
+with st.sidebar:
+    try:
+        st.image("logo.png", width=150)
+    except:
+        pass # Logo yoksa devam et
+
+st.title("📊 Aşı Takip & Performans Dashboard")
+st.markdown("---")
+
+# -----------------------------------------------------------------------------
+# 3. VERİ YÜKLEME VE İŞLEME
+# -----------------------------------------------------------------------------
+st.sidebar.header("1. Veri Yükleme")
+uploaded_file = st.sidebar.file_uploader("Excel veya CSV Yükleyin", type=["xlsx", "csv"])
+
+# Session State Başlatma
+if 'filtered_df' not in st.session_state:
+    st.session_state.filtered_df = pd.DataFrame()
+if 'has_run' not in st.session_state:
+    st.session_state.has_run = False
+
+if uploaded_file:
+    # Veriyi bir kez oku ve önbelleğe al
+    if 'raw_data' not in st.session_state or st.session_state.get('file_name') != uploaded_file.name:
+        try:
+            if uploaded_file.name.endswith('.csv'):
+                df = pd.read_csv(uploaded_file, encoding='cp1254')
+            else:
+                df = pd.read_excel(uploaded_file)
+            
+            # Temizlik
+            df.columns = [c.strip() for c in df.columns]
+            rename_map = {'ILCE': 'ilce', 'asm': 'asm', 'BIRIM_ADI': 'birim', 
+                          'ASI_SON_TARIH': 'hedef_tarih', 'ASI_YAP_TARIH': 'yapilan_tarih', 'ASI_DOZU': 'doz'}
+            df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
+            
+            # Doz sayısal kontrolü
+            if 'doz' in df.columns:
+                df['doz'] = pd.to_numeric(df['doz'], errors='coerce').fillna(0).astype(int)
+            else:
+                df['doz'] = 1
+            
+            # Tarih dönüşümü
+            df['hedef_tarih'] = pd.to_datetime(df['hedef_tarih'], errors='coerce')
+            df['yapilan_tarih'] = pd.to_datetime(df['yapilan_tarih'], errors='coerce')
+            df = df.dropna(subset=['hedef_tarih'])
+            
+            st.session_state.raw_data = df
+            st.session_state.file_name = uploaded_file.name
+            
+        except Exception as e:
+            st.error(f"Dosya okuma hatası: {e}")
+            st.stop()
+
+    df = st.session_state.raw_data
+
+    # -----------------------------------------------------------------------------
+    # 4. FİLTRELEME FORMU
+    # -----------------------------------------------------------------------------
+    st.sidebar.header("2. Filtre Ayarları")
+    
+    with st.sidebar.form(key='filter_form'):
+        # A. İlçe ve ASM Seçimi
+        ilce_list = ["Tümü"] + sorted(df['ilce'].astype(str).unique().tolist())
+        selected_ilce = st.selectbox("İlçe Seç", ilce_list)
+        
+        # Seçilen ilçeye göre ASM listesini daraltmak yerine tümünü gösterip mantıksal filtreliyoruz
+        # (Form içinde dinamik değişim kısıtlıdır, kullanıcı deneyimi için basit tutuyoruz)
+        if selected_ilce != "Tümü":
+            asm_source = df[df['ilce'] == selected_ilce]
+        else:
+            asm_source = df
+        
+        asm_list = ["Tümü"] + sorted(asm_source['asm'].astype(str).unique().tolist())
+        selected_asm = st.selectbox("ASM Seç", asm_list)
+
+        # B. Doz Seçimi (Çoklu)
+        dose_options = list(range(1, 10))
+        selected_doses = st.multiselect("Aşı Dozu Seçin", options=dose_options, default=[], help="Boş bırakırsanız hepsi dahil edilir.")
+
+        # C. Tarih
+        min_date = df['hedef_tarih'].min().date()
+        max_date = df['hedef_tarih'].max().date()
+        date_range = st.date_input("Tarih Aralığı", [min_date, max_date])
+
+        # D. Hedefler
+        target_val = st.number_input("Hedef Başarı (%)", value=90)
+        min_val = st.number_input("Alt Sınır (%)", value=70)
+        
+        st.markdown("---")
+        submit_button = st.form_submit_button(label='🚀 Filtreleri Uygula')
+
+    # -----------------------------------------------------------------------------
+    # 5. ANALİZ İŞLEMİ (Butona Basıldığında)
+    # -----------------------------------------------------------------------------
+    if submit_button:
+        with st.spinner('Veriler analiz ediliyor...'):
+            temp_df = df.copy()
+            
+            # Filtreler
+            if selected_ilce != "Tümü":
+                temp_df = temp_df[temp_df['ilce'] == selected_ilce]
+            if selected_asm != "Tümü":
+                temp_df = temp_df[temp_df['asm'] == selected_asm]
+            if selected_doses:
+                temp_df = temp_df[temp_df['doz'].isin(selected_doses)]
+            if isinstance(date_range, list) and len(date_range) == 2:
+                mask = (temp_df['hedef_tarih'].dt.date >= date_range[0]) & (temp_df['hedef_tarih'].dt.date <= date_range[1])
+                temp_df = temp_df[mask]
+                
+            # Hesaplama
+            temp_df['basari_durumu'] = temp_df['yapilan_tarih'].notna().astype(int)
+            
+            # Sonuçları Kaydet
+            st.session_state.filtered_df = temp_df
+            st.session_state.filter_info = f"{selected_ilce} / {selected_asm}"
+            st.session_state.target_val = target_val
+            st.session_state.min_val = min_val
+            st.session_state.has_run = True
+
+    # -----------------------------------------------------------------------------
+    # 6. SONUÇ GÖSTERİMİ
+    # -----------------------------------------------------------------------------
+    if st.session_state.has_run:
+        df_res = st.session_state.filtered_df
+        t_val = st.session_state.target_val
+        m_val = st.session_state.min_val
+        
+        if df_res.empty:
+            st.warning("Seçilen kriterlere uygun veri bulunamadı.")
+        else:
+            # KPI Kartları
+            total_target = len(df_res)
+            total_done = df_res['basari_durumu'].sum()
+            
+            ozet = df_res.groupby(['ilce', 'asm', 'birim']).agg(
+                toplam=('basari_durumu', 'count'),
+                yapilan=('basari_durumu', 'sum')
+            ).reset_index()
+            
+            ozet['oran'] = 0.0
+            if not ozet.empty:
+                ozet['oran'] = (ozet['yapilan'] / ozet['toplam'] * 100).round(2)
+            
+            riskli_sayisi = len(ozet[ozet['oran'] < m_val])
+
+            c1, c2, c3 = st.columns(3)
+            c1.metric("🔵 Toplam Hedef", f"{total_target:,}".replace(",", "."))
+            c2.metric("🟢 Toplam Yapılan", f"{total_done:,}".replace(",", "."))
+            c3.metric("🔴 Riskli Birim", riskli_sayisi)
+            
+            st.caption(f"📍 Filtre: {st.session_state.filter_info}")
+            st.markdown("---")
+
+            # Grafikler
+            g1, g2 = st.columns(2)
+            
+            # Bar Grafik
+            group_col = 'ilce' if st.session_state.filter_info.startswith("Tümü") else 'asm'
+            chart_data = df_res.groupby(group_col).agg(
+                toplam=('basari_durumu','count'), 
+                yapilan=('basari_durumu','sum')
+            ).reset_index()
+            
+            if not chart_data.empty:
+                chart_data['oran'] = (chart_data['yapilan'] / chart_data['toplam'] * 100).round(2)
+                chart_data['Renk'] = chart_data['oran'].apply(lambda x: 'Yeşil' if x >= t_val else ('Sarı' if x >= m_val else 'Kırmızı'))
+                
+                fig_bar = px.bar(chart_data, x=group_col, y='oran', color='Renk',
+                                 color_discrete_map={'Yeşil':'#198754', 'Sarı':'#ffc107', 'Kırmızı':'#dc3545'},
+                                 text='oran', title="Performans Grafiği")
+                fig_bar.update_traces(textposition='outside')
+                g1.plotly_chart(fig_bar, use_container_width=True)
+
+            # Trend Grafik
+            df_res['AY'] = df_res['hedef_tarih'].dt.strftime('%Y-%m')
+            trend = df_res.groupby('AY').agg({'basari_durumu':['sum','count']}).reset_index()
+            trend.columns = ['AY', 'YAPILAN', 'HEDEF']
+            trend['ORAN'] = (trend['YAPILAN'] / trend['HEDEF'] * 100).round(2)
+            
+            fig_line = px.line(trend, x='AY', y='ORAN', title="Zaman Serisi Trendi", markers=True)
+            g2.plotly_chart(fig_line, use_container_width=True)
+
+            # --- SEKMELER VE İNDİRME ---
+            st.subheader("📋 Detaylı Raporlar")
+            tab1, tab2, tab3 = st.tabs(["📊 Birim Performans", "⚠️ Düşük Oranlılar", "🚨 Riskli ASM'ler"])
+
+            # Sekme 1
+            with tab1:
+                c_d1, c_d2 = st.columns([1,1])
+                c_d1.download_button("📥 Excel İndir", data=to_excel(ozet), file_name='birim_perf.xlsx')
+                c_d2.download_button("📄 PDF İndir (Yatay)", data=create_pdf(ozet, "Birim Performans"), file_name='birim_perf.pdf')
+                
+                st.dataframe(ozet, column_config={
+                    "oran": st.column_config.ProgressColumn("Başarı Oranı", format="%.2f%%", min_value=0, max_value=100)
+                }, use_container_width=True, hide_index=True)
+
+            # Sekme 2
+            with tab2:
+                low_units = ozet[ozet['oran'] < m_val].sort_values(by='oran')
+                c_d1, c_d2 = st.columns([1,1])
+                c_d1.download_button("📥 Excel İndir", data=to_excel(low_units), file_name='dusuk_oran.xlsx', key='dl1')
+                c_d2.download_button("📄 PDF İndir (Yatay)", data=create_pdf(low_units, "Dusuk Oranli Birimler"), file_name='dusuk_oran.pdf', key='dp1')
+                
+                st.dataframe(low_units, column_config={
+                    "oran": st.column_config.NumberColumn("Başarı Oranı", format="%.2f%%")
+                }, use_container_width=True, hide_index=True)
+
+            # Sekme 3
+            with tab3:
+                riskli = []
+                for (i, a), g in ozet.groupby(['ilce', 'asm']):
+                    k = g[g['oran'] < m_val]
+                    if not k.empty:
+                        riskli.append({"İlçe": i, "ASM": a, "Riskli Birim": len(k), "Toplam": len(g)})
+                
+                rdf = pd.DataFrame(riskli).sort_values(by="Riskli Birim", ascending=False) if riskli else pd.DataFrame()
+                
+                if not rdf.empty:
+                    c_d1, c_d2 = st.columns([1,1])
+                    c_d1.download_button("📥 Excel İndir", data=to_excel(rdf), file_name='riskli_asm.xlsx', key='dl2')
+                    c_d2.download_button("📄 PDF İndir (Yatay)", data=create_pdf(rdf, "Riskli ASM Listesi"), file_name='riskli_asm.pdf', key='dp2')
+                    st.dataframe(rdf, use_container_width=True, hide_index=True)
+                else:
+                    st.success("Harika! Riskli ASM bulunamadı.")
+    else:
+        st.info("👈 Analizi başlatmak için soldaki menüden **'Filtreleri Uygula'** butonuna basınız.")
+
+else:
+    st.info("⬅️ Lütfen sol menüden Excel dosyanızı yükleyerek başlayın.")
