@@ -25,9 +25,11 @@ def create_pdf(df, title, info):
     """Veriyi PDF formatına çevirir. Yatay Mod (Landscape)."""
     class PDF(FPDF):
         def header(self):
+            # Logo
             try: self.image('logo.png', 10, 8, 33)
             except: pass
             
+            # Başlık
             self.set_y(10)
             self.set_font('Arial', 'B', 16)
             self.cell(0, 10, clean_text(title), 0, 1, 'C')
@@ -153,10 +155,11 @@ if uploaded_file:
             if 'doz' in df.columns: df['doz'] = pd.to_numeric(df['doz'], errors='coerce').fillna(0).astype(int)
             else: df['doz'] = 1
             
-            # --- TARİH DÜZELTME (dayfirst=True EKLENDİ) ---
-            # Bu ayar 01.05.2024'ü 1 Mayıs olarak okumasını sağlar
-            df['hedef_tarih'] = pd.to_datetime(df['hedef_tarih'], dayfirst=True, errors='coerce')
-            df['yapilan_tarih'] = pd.to_datetime(df['yapilan_tarih'], dayfirst=True, errors='coerce')
+            # --- TARİH DÜZELTME ---
+            # Veri örneğinize göre format: 2025-05-14 (YYYY-AA-GG)
+            # dayfirst=True bazen YYYY ile başlayan tarihlerde kafa karıştırabilir, standart bırakıyoruz.
+            df['hedef_tarih'] = pd.to_datetime(df['hedef_tarih'], errors='coerce')
+            df['yapilan_tarih'] = pd.to_datetime(df['yapilan_tarih'], errors='coerce')
             
             # Tarihi olmayan satırları temizle
             df = df.dropna(subset=['hedef_tarih'])
@@ -186,10 +189,11 @@ if uploaded_file:
         dose_options = list(range(1, 10))
         selected_doses = st.multiselect("Aşı Dozu Seçin", options=dose_options, default=[])
 
-        # Tarih Aralığı (Güvenli Kontrol)
+        # Tarih Aralığı
         if not df['hedef_tarih'].empty:
             min_date = df['hedef_tarih'].min().date()
             max_date = df['hedef_tarih'].max().date()
+            # Varsayılan olarak tüm aralık
             date_range = st.date_input("Tarih Aralığı", [min_date, max_date])
         else:
             st.error("Veride geçerli tarih bulunamadı!")
@@ -205,52 +209,57 @@ if uploaded_file:
     # 5. ANALİZ İŞLEMİ
     # -----------------------------------------------------------------------------
     if submit_button:
-        with st.spinner('Veriler analiz ediliyor...'):
-            temp_df = df.copy()
-            
-            if selected_ilce != "Tümü": temp_df = temp_df[temp_df['ilce'] == selected_ilce]
-            if selected_asm != "Tümü": temp_df = temp_df[temp_df['asm'] == selected_asm]
-            if selected_doses: temp_df = temp_df[temp_df['doz'].isin(selected_doses)]
-            
-            # TARİH FİLTRESİ (Güvenli Karşılaştırma)
-            if isinstance(date_range, list) and len(date_range) == 2:
-                # .dt.date kullanarak sadece tarih kısmını karşılaştırıyoruz
-                mask = (temp_df['hedef_tarih'].dt.date >= date_range[0]) & (temp_df['hedef_tarih'].dt.date <= date_range[1])
+        # Tarih Aralığı Kontrolü (Tek tarih seçilirse tuple uzunluğu 1 olur)
+        if len(date_range) != 2:
+             st.error("⚠️ Lütfen tarih aralığı için hem Başlangıç hem de Bitiş tarihini seçiniz.")
+        else:
+            with st.spinner('Veriler analiz ediliyor...'):
+                temp_df = df.copy()
+                
+                # --- 1. Adım: FİLTRELERİ UYGULA ---
+                if selected_ilce != "Tümü": temp_df = temp_df[temp_df['ilce'] == selected_ilce]
+                if selected_asm != "Tümü": temp_df = temp_df[temp_df['asm'] == selected_asm]
+                if selected_doses: temp_df = temp_df[temp_df['doz'].isin(selected_doses)]
+                
+                # --- TARİH FİLTRESİ (DÜZELTİLDİ) ---
+                # isinstance list kontrolü kaldırıldı, sadece uzunluk kontrolü yapılıyor.
+                start_date, end_date = date_range
+                mask = (temp_df['hedef_tarih'].dt.date >= start_date) & (temp_df['hedef_tarih'].dt.date <= end_date)
                 temp_df = temp_df[mask]
                 
-            temp_df['basari_durumu'] = temp_df['yapilan_tarih'].notna().astype(int)
-            
-            # Header Bilgileri Hazırla
-            date_str = "Tumu"
-            if isinstance(date_range, list) and len(date_range) == 2:
-                date_str = f"{date_range[0].strftime('%d.%m.%Y')} - {date_range[1].strftime('%d.%m.%Y')}"
-            dose_str = ", ".join(map(str, selected_doses)) if selected_doses else ""
+                # Başarı Durumu Hesapla
+                temp_df['basari_durumu'] = temp_df['yapilan_tarih'].notna().astype(int)
+                
+                # Header Bilgileri
+                date_str = f"{start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')}"
+                dose_str = ", ".join(map(str, selected_doses)) if selected_doses else ""
 
-            st.session_state.filtered_df = temp_df
-            st.session_state.filter_info = f"{selected_ilce} / {selected_asm}"
-            st.session_state.target_val = target_val
-            st.session_state.min_val = min_val
-            st.session_state.report_meta = {
-                "tarih_araligi": date_str,
-                "ilce": selected_ilce,
-                "asm": selected_asm,
-                "doz": dose_str,
-                "hedef": target_val,
-                "alt_sinir": min_val
-            }
-            st.session_state.has_run = True
+                # Sonuçları Kaydet
+                st.session_state.filtered_df = temp_df
+                st.session_state.filter_info = f"{selected_ilce} / {selected_asm}"
+                st.session_state.target_val = target_val
+                st.session_state.min_val = min_val
+                st.session_state.report_meta = {
+                    "tarih_araligi": date_str,
+                    "ilce": selected_ilce,
+                    "asm": selected_asm,
+                    "doz": dose_str,
+                    "hedef": target_val,
+                    "alt_sinir": min_val
+                }
+                st.session_state.has_run = True
 
     # -----------------------------------------------------------------------------
     # 6. SONUÇLAR
     # -----------------------------------------------------------------------------
     if st.session_state.has_run:
-        df_res = st.session_state.filtered_df
+        df_res = st.session_state.filtered_df 
         t_val = st.session_state.target_val
         m_val = st.session_state.min_val
         meta = st.session_state.report_meta
         
         if df_res.empty:
-            st.warning("Seçilen tarih aralığında veya kriterlerde veri bulunamadı.")
+            st.warning("Seçilen tarih aralığında veri bulunamadı.")
         else:
             ozet = df_res.groupby(['ilce', 'asm', 'birim']).agg(
                 toplam=('basari_durumu', 'count'),
