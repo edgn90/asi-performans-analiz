@@ -22,55 +22,38 @@ def to_excel(df):
     return output.getvalue()
 
 def create_pdf(df, title, info):
-    """
-    Veriyi PDF formatına çevirir.
-    Parametreler:
-    - df: Tablo verisi
-    - title: Rapor başlığı
-    - info: Filtre ve ayar bilgilerini içeren sözlük (header için)
-    """
+    """Veriyi PDF formatına çevirir. Yatay Mod (Landscape)."""
     class PDF(FPDF):
         def header(self):
-            # --- 1. LOGO (SOL) ---
-            try:
-                # Logo (x=10, y=8, w=33)
-                self.image('logo.png', 10, 8, 33)
-            except:
-                pass
+            try: self.image('logo.png', 10, 8, 33)
+            except: pass
             
-            # --- 2. BAŞLIK (ORTA) ---
-            self.set_y(10) # Logoyla hizalı başla
+            self.set_y(10)
             self.set_font('Arial', 'B', 16)
             self.cell(0, 10, clean_text(title), 0, 1, 'C')
             
-            # --- 3. BİLGİ BLOĞU (SAĞ / HEADER ALTI) ---
+            # Header Bilgileri
             self.set_font('Arial', '', 9)
-            self.set_text_color(80, 80, 80) # Koyu gri
+            self.set_text_color(80, 80, 80)
             
-            # Bilgileri Hazırla
             date_str = f"Tarih: {info['tarih_araligi']}"
-            
-            # Filtre Metinleri (Tümü seçiliyse düzgün yazsın)
             ilce_txt = info['ilce'] if info['ilce'] != "Tümü" else "Tum Ilceler"
             asm_txt = info['asm'] if info['asm'] != "Tümü" else "Tum ASM'ler"
             doz_txt = info['doz'] if info['doz'] else "Tum Dozlar"
             
-            filter_str = f"Konum: {ilce_txt} / {asm_txt} | Aşı: {doz_txt}"
+            filter_str = f"Konum: {ilce_txt} / {asm_txt} | Asi: {doz_txt}"
             threshold_str = f"Hedef Basari: %{info['hedef']} | Alt Sinir: %{info['alt_sinir']}"
 
-            # Bilgileri Yazdır (Sağa Yaslı veya Ortalanmış)
-            # Logodan sonraki boşluğa (Header'ın altına) yazıyoruz
             self.ln(2) 
             self.cell(0, 5, clean_text(date_str), 0, 1, 'R')
             self.cell(0, 5, clean_text(filter_str), 0, 1, 'R')
-            self.set_font('Arial', 'B', 9) # Eşik değerleri kalın olsun
-            self.set_text_color(0, 0, 0) # Siyah
+            self.set_font('Arial', 'B', 9)
+            self.set_text_color(0, 0, 0)
             self.cell(0, 5, clean_text(threshold_str), 0, 1, 'R')
             
-            # Çizgi Çek
             self.ln(5)
             self.set_draw_color(200, 200, 200)
-            self.line(10, self.get_y(), 287, self.get_y()) # Sayfa boyuna çizgi
+            self.line(10, self.get_y(), 287, self.get_y())
             self.ln(5)
 
         def footer(self):
@@ -79,27 +62,17 @@ def create_pdf(df, title, info):
             self.cell(0, 10, f'Sayfa {self.page_no()}', 0, 0, 'C')
 
     def clean_text(text):
-        """Türkçe karakterleri Latin-1 uyumlu hale getirir."""
         if not isinstance(text, str): return str(text)
-        # Emojileri temizle
-        text = text.replace("🔴", "!").replace("🟢", "").replace("🟠", "").replace("🔵", "")
-        
-        replacements = {
-            'ğ': 'g', 'Ğ': 'G', 'ş': 's', 'Ş': 'S', 'ı': 'i', 'İ': 'I', 
-            'ü': 'u', 'Ü': 'U', 'ö': 'o', 'Ö': 'O', 'ç': 'c', 'Ç': 'C'
-        }
-        for tr, eng in replacements.items():
-            text = text.replace(tr, eng)
+        text = text.replace("🔴", "!").replace("🟢", "").replace("🟠", "")
+        replacements = {'ğ':'g','Ğ':'G','ş':'s','Ş':'S','ı':'i','İ':'I','ü':'u','Ü':'U','ö':'o','Ö':'O','ç':'c','Ç':'C'}
+        for tr, eng in replacements.items(): text = text.replace(tr, eng)
         return text.encode('latin-1', 'replace').decode('latin-1')
 
-    # YATAY (Landscape) Modu
     pdf = PDF(orientation='L', unit='mm', format='A4')
     pdf.alias_nb_pages()
     pdf.add_page()
     
-    # --- AKILLI SÜTUN GENİŞLİĞİ ---
     available_width = 275 
-    
     max_lens = []
     for col in df.columns:
         max_l = len(str(col))
@@ -109,7 +82,6 @@ def create_pdf(df, title, info):
         max_lens.append(max_l)
     
     total_len = sum(max_lens)
-    
     col_widths = []
     for l in max_lens:
         w = (l / total_len) * available_width
@@ -121,23 +93,17 @@ def create_pdf(df, title, info):
         factor = available_width / final_total
         col_widths = [w * factor for w in col_widths]
 
-    # --- TABLO BAŞLIKLARI ---
     pdf.set_font("Arial", 'B', 9)
     pdf.set_fill_color(220, 230, 240)
     pdf.set_text_color(0, 0, 0)
-    
     for i, col in enumerate(df.columns):
         pdf.cell(col_widths[i], 10, clean_text(col), 1, 0, 'C', fill=True)
     pdf.ln()
 
-    # --- TABLO VERİLERİ ---
     pdf.set_font("Arial", size=8)
-    
     for _, row in df.iterrows():
-        # Sayfa sonu kontrolü
-        if pdf.get_y() > 175: # Biraz pay bırakalım
+        if pdf.get_y() > 175:
             pdf.add_page()
-            # Yeni sayfada başlıkları tekrar bas (Header otomatik basılır)
             pdf.set_font("Arial", 'B', 9)
             pdf.set_fill_color(220, 230, 240)
             for i, col in enumerate(df.columns):
@@ -148,11 +114,9 @@ def create_pdf(df, title, info):
         for i, item in enumerate(row):
             text = clean_text(str(item))
             max_char = int(col_widths[i] / 1.8) 
-            if len(text) > max_char:
-                text = text[:max_char-2] + ".."
+            if len(text) > max_char: text = text[:max_char-2] + ".."
             pdf.cell(col_widths[i], 8, text, 1, 0, 'C')
         pdf.ln()
-
     return pdf.output(dest='S').encode('latin-1')
 
 # -----------------------------------------------------------------------------
@@ -168,7 +132,7 @@ st.title("📊 Aşı Takip & Performans Dashboard")
 st.markdown("---")
 
 # -----------------------------------------------------------------------------
-# 3. VERİ YÜKLEME
+# 3. VERİ YÜKLEME VE TARİH DÜZELTME
 # -----------------------------------------------------------------------------
 st.sidebar.header("1. Veri Yükleme")
 uploaded_file = st.sidebar.file_uploader("Excel veya CSV Yükleyin", type=["xlsx", "csv"])
@@ -189,8 +153,12 @@ if uploaded_file:
             if 'doz' in df.columns: df['doz'] = pd.to_numeric(df['doz'], errors='coerce').fillna(0).astype(int)
             else: df['doz'] = 1
             
-            df['hedef_tarih'] = pd.to_datetime(df['hedef_tarih'], errors='coerce')
-            df['yapilan_tarih'] = pd.to_datetime(df['yapilan_tarih'], errors='coerce')
+            # --- TARİH DÜZELTME (dayfirst=True EKLENDİ) ---
+            # Bu ayar 01.05.2024'ü 1 Mayıs olarak okumasını sağlar
+            df['hedef_tarih'] = pd.to_datetime(df['hedef_tarih'], dayfirst=True, errors='coerce')
+            df['yapilan_tarih'] = pd.to_datetime(df['yapilan_tarih'], dayfirst=True, errors='coerce')
+            
+            # Tarihi olmayan satırları temizle
             df = df.dropna(subset=['hedef_tarih'])
             
             st.session_state.raw_data = df
@@ -218,9 +186,14 @@ if uploaded_file:
         dose_options = list(range(1, 10))
         selected_doses = st.multiselect("Aşı Dozu Seçin", options=dose_options, default=[])
 
-        min_date = df['hedef_tarih'].min().date()
-        max_date = df['hedef_tarih'].max().date()
-        date_range = st.date_input("Tarih Aralığı", [min_date, max_date])
+        # Tarih Aralığı (Güvenli Kontrol)
+        if not df['hedef_tarih'].empty:
+            min_date = df['hedef_tarih'].min().date()
+            max_date = df['hedef_tarih'].max().date()
+            date_range = st.date_input("Tarih Aralığı", [min_date, max_date])
+        else:
+            st.error("Veride geçerli tarih bulunamadı!")
+            st.stop()
 
         target_val = st.number_input("Hedef Başarı (%)", value=90)
         min_val = st.number_input("Alt Sınır (%)", value=70)
@@ -234,30 +207,29 @@ if uploaded_file:
     if submit_button:
         with st.spinner('Veriler analiz ediliyor...'):
             temp_df = df.copy()
+            
             if selected_ilce != "Tümü": temp_df = temp_df[temp_df['ilce'] == selected_ilce]
             if selected_asm != "Tümü": temp_df = temp_df[temp_df['asm'] == selected_asm]
             if selected_doses: temp_df = temp_df[temp_df['doz'].isin(selected_doses)]
+            
+            # TARİH FİLTRESİ (Güvenli Karşılaştırma)
             if isinstance(date_range, list) and len(date_range) == 2:
+                # .dt.date kullanarak sadece tarih kısmını karşılaştırıyoruz
                 mask = (temp_df['hedef_tarih'].dt.date >= date_range[0]) & (temp_df['hedef_tarih'].dt.date <= date_range[1])
                 temp_df = temp_df[mask]
                 
             temp_df['basari_durumu'] = temp_df['yapilan_tarih'].notna().astype(int)
             
-            # Tarih aralığını string'e çevir (Header için)
+            # Header Bilgileri Hazırla
             date_str = "Tumu"
             if isinstance(date_range, list) and len(date_range) == 2:
                 date_str = f"{date_range[0].strftime('%d.%m.%Y')} - {date_range[1].strftime('%d.%m.%Y')}"
-
-            # Doz bilgisini string'e çevir
             dose_str = ", ".join(map(str, selected_doses)) if selected_doses else ""
 
-            # Session State'e kaydet (Veri + Metadata)
             st.session_state.filtered_df = temp_df
             st.session_state.filter_info = f"{selected_ilce} / {selected_asm}"
             st.session_state.target_val = target_val
             st.session_state.min_val = min_val
-            
-            # PDF Header için gerekli bilgileri sözlükte topla
             st.session_state.report_meta = {
                 "tarih_araligi": date_str,
                 "ilce": selected_ilce,
@@ -266,7 +238,6 @@ if uploaded_file:
                 "hedef": target_val,
                 "alt_sinir": min_val
             }
-            
             st.session_state.has_run = True
 
     # -----------------------------------------------------------------------------
@@ -276,10 +247,10 @@ if uploaded_file:
         df_res = st.session_state.filtered_df
         t_val = st.session_state.target_val
         m_val = st.session_state.min_val
-        meta = st.session_state.report_meta # PDF için metadata
+        meta = st.session_state.report_meta
         
         if df_res.empty:
-            st.warning("Seçilen kriterlere uygun veri bulunamadı.")
+            st.warning("Seçilen tarih aralığında veya kriterlerde veri bulunamadı.")
         else:
             ozet = df_res.groupby(['ilce', 'asm', 'birim']).agg(
                 toplam=('basari_durumu', 'count'),
@@ -314,7 +285,7 @@ if uploaded_file:
             c3.metric("🟠 Düşük Oranlı Birim", f"{dusuk_oranli_birim_sayisi}")
             c4.metric("🔴 Riskli ASM Sayısı", f"{riskli_asm_sayisi}")
             
-            st.caption(f"📍 Filtre: {st.session_state.filter_info}")
+            st.caption(f"📍 Filtre: {st.session_state.filter_info} | 📅 Tarih: {meta['tarih_araligi']}")
             st.markdown("---")
 
             g1, g2 = st.columns(2)
@@ -342,7 +313,6 @@ if uploaded_file:
             with tab1:
                 c_d1, c_d2 = st.columns([1,1])
                 c_d1.download_button("📥 Excel İndir", data=to_excel(ozet), file_name='birim_perf.xlsx')
-                # create_pdf artık 'meta' bilgisini de alıyor
                 c_d2.download_button("📄 PDF İndir", data=create_pdf(ozet, "Birim Performans Raporu", meta), file_name='birim_perf.pdf')
                 st.dataframe(ozet, column_config={"oran": st.column_config.ProgressColumn("Başarı Oranı", format="%.2f%%", min_value=0, max_value=100)}, use_container_width=True, hide_index=True)
 
