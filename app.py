@@ -122,7 +122,50 @@ def create_pdf(df, title, info):
     return pdf.output(dest='S').encode('latin-1')
 
 # -----------------------------------------------------------------------------
-# 2. SAYFA AYARLARI
+# 2. PERFORMANS ÖNBELLEKLEME (DATA CACHING)
+# -----------------------------------------------------------------------------
+@st.cache_data
+def load_data(file):
+    """
+    Yüklenen dosyayı okur, temizler ve önbelleğe (cache) alır.
+    Aynı dosya tekrar yüklenirse işlem yapmadan hafızadan getirir.
+    """
+    try:
+        if file.name.endswith('.csv'):
+            df = pd.read_csv(file, encoding='cp1254')
+        else:
+            df = pd.read_excel(file)
+        
+        # Sütun İsimlerini Temizle
+        df.columns = [c.strip() for c in df.columns]
+        
+        # Standart İsimlendirme
+        rename_map = {
+            'ILCE': 'ilce', 'asm': 'asm', 'BIRIM_ADI': 'birim', 
+            'ASI_SON_TARIH': 'hedef_tarih', 'ASI_YAP_TARIH': 'yapilan_tarih', 
+            'ASI_DOZU': 'doz'
+        }
+        df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
+        
+        # Doz Dönüşümü
+        if 'doz' in df.columns: 
+            df['doz'] = pd.to_numeric(df['doz'], errors='coerce').fillna(0).astype(int)
+        else: 
+            df['doz'] = 1
+            
+        # Tarih Dönüşümü (dayfirst=True Önemli)
+        df['hedef_tarih'] = pd.to_datetime(df['hedef_tarih'], dayfirst=True, errors='coerce')
+        df['yapilan_tarih'] = pd.to_datetime(df['yapilan_tarih'], dayfirst=True, errors='coerce')
+        
+        # Geçersiz tarihleri temizle
+        df = df.dropna(subset=['hedef_tarih'])
+        
+        return df
+    except Exception as e:
+        return None
+
+# -----------------------------------------------------------------------------
+# 3. SAYFA AYARLARI
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="Aşı Performans Sistemi", layout="wide")
 
@@ -134,46 +177,25 @@ st.title("📊 Aşı Takip & Performans Dashboard")
 st.markdown("---")
 
 # -----------------------------------------------------------------------------
-# 3. VERİ YÜKLEME VE TARİH DÜZELTME
+# 4. VERİ YÜKLEME VE İŞLEME
 # -----------------------------------------------------------------------------
 st.sidebar.header("1. Veri Yükleme")
 uploaded_file = st.sidebar.file_uploader("Excel veya CSV Yükleyin", type=["xlsx", "csv"])
 
+# Session State Başlangıç Değerleri
 if 'filtered_df' not in st.session_state: st.session_state.filtered_df = pd.DataFrame()
 if 'has_run' not in st.session_state: st.session_state.has_run = False
 
 if uploaded_file:
-    if 'raw_data' not in st.session_state or st.session_state.get('file_name') != uploaded_file.name:
-        try:
-            if uploaded_file.name.endswith('.csv'): df = pd.read_csv(uploaded_file, encoding='cp1254')
-            else: df = pd.read_excel(uploaded_file)
-            
-            df.columns = [c.strip() for c in df.columns]
-            rename_map = {'ILCE': 'ilce', 'asm': 'asm', 'BIRIM_ADI': 'birim', 'ASI_SON_TARIH': 'hedef_tarih', 'ASI_YAP_TARIH': 'yapilan_tarih', 'ASI_DOZU': 'doz'}
-            df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
-            
-            if 'doz' in df.columns: df['doz'] = pd.to_numeric(df['doz'], errors='coerce').fillna(0).astype(int)
-            else: df['doz'] = 1
-            
-            # --- TARİH DÜZELTME ---
-            # Veri örneğinize göre format: 2025-05-14 (YYYY-AA-GG)
-            # dayfirst=True bazen YYYY ile başlayan tarihlerde kafa karıştırabilir, standart bırakıyoruz.
-            df['hedef_tarih'] = pd.to_datetime(df['hedef_tarih'], errors='coerce')
-            df['yapilan_tarih'] = pd.to_datetime(df['yapilan_tarih'], errors='coerce')
-            
-            # Tarihi olmayan satırları temizle
-            df = df.dropna(subset=['hedef_tarih'])
-            
-            st.session_state.raw_data = df
-            st.session_state.file_name = uploaded_file.name
-        except Exception as e:
-            st.error(f"Dosya okuma hatası: {e}")
-            st.stop()
-
-    df = st.session_state.raw_data
+    # --- CACHE KULLANARAK VERİYİ YÜKLE ---
+    df = load_data(uploaded_file)
+    
+    if df is None:
+        st.error("Dosya okunurken bir hata oluştu. Lütfen formatı kontrol edin.")
+        st.stop()
 
     # -----------------------------------------------------------------------------
-    # 4. FİLTRELEME FORMU
+    # 5. FİLTRELEME FORMU
     # -----------------------------------------------------------------------------
     st.sidebar.header("2. Filtre Ayarları")
     with st.sidebar.form(key='filter_form'):
@@ -193,7 +215,6 @@ if uploaded_file:
         if not df['hedef_tarih'].empty:
             min_date = df['hedef_tarih'].min().date()
             max_date = df['hedef_tarih'].max().date()
-            # Varsayılan olarak tüm aralık
             date_range = st.date_input("Tarih Aralığı", [min_date, max_date])
         else:
             st.error("Veride geçerli tarih bulunamadı!")
@@ -206,23 +227,22 @@ if uploaded_file:
         submit_button = st.form_submit_button(label='🚀 Filtreleri Uygula')
 
     # -----------------------------------------------------------------------------
-    # 5. ANALİZ İŞLEMİ
+    # 6. ANALİZ İŞLEMİ
     # -----------------------------------------------------------------------------
     if submit_button:
-        # Tarih Aralığı Kontrolü (Tek tarih seçilirse tuple uzunluğu 1 olur)
+        # Tarih Aralığı Kontrolü
         if len(date_range) != 2:
              st.error("⚠️ Lütfen tarih aralığı için hem Başlangıç hem de Bitiş tarihini seçiniz.")
         else:
             with st.spinner('Veriler analiz ediliyor...'):
                 temp_df = df.copy()
                 
-                # --- 1. Adım: FİLTRELERİ UYGULA ---
+                # --- Filtreleri Uygula ---
                 if selected_ilce != "Tümü": temp_df = temp_df[temp_df['ilce'] == selected_ilce]
                 if selected_asm != "Tümü": temp_df = temp_df[temp_df['asm'] == selected_asm]
                 if selected_doses: temp_df = temp_df[temp_df['doz'].isin(selected_doses)]
                 
-                # --- TARİH FİLTRESİ (DÜZELTİLDİ) ---
-                # isinstance list kontrolü kaldırıldı, sadece uzunluk kontrolü yapılıyor.
+                # Tarih Filtresi
                 start_date, end_date = date_range
                 mask = (temp_df['hedef_tarih'].dt.date >= start_date) & (temp_df['hedef_tarih'].dt.date <= end_date)
                 temp_df = temp_df[mask]
@@ -250,7 +270,7 @@ if uploaded_file:
                 st.session_state.has_run = True
 
     # -----------------------------------------------------------------------------
-    # 6. SONUÇLAR
+    # 7. SONUÇLAR
     # -----------------------------------------------------------------------------
     if st.session_state.has_run:
         df_res = st.session_state.filtered_df 
