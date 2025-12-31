@@ -17,7 +17,7 @@ def to_excel(df):
         worksheet = writer.sheets['Sheet1']
         for i, col in enumerate(df.columns):
             max_len = max(df[col].astype(str).map(len).max(), len(col)) + 2
-            if max_len > 60: max_len = 60 # Birim isimleri uzun olabilir
+            if max_len > 60: max_len = 60 
             worksheet.set_column(i, i, max_len)
     return output.getvalue()
 
@@ -113,7 +113,7 @@ def create_pdf(df, title, info):
 
         for i, item in enumerate(row):
             text = clean_text(str(item))
-            # Çok uzun metinler için kırpma (Özellikle Birim Adı uzunsa)
+            # Basit kırpma
             max_char = int(col_widths[i] / 1.6) 
             if len(text) > max_char: text = text[:max_char-2] + ".."
             pdf.cell(col_widths[i], 8, text, 1, 0, 'C')
@@ -133,7 +133,6 @@ def load_data(file):
         
         df.columns = [c.strip() for c in df.columns]
         
-        # Sütun Eşleştirme (BIRIM_ADI -> birim olarak atanıyor)
         rename_map = {
             'ILCE': 'ilce', 'asm': 'asm', 'BIRIM_ADI': 'birim', 
             'ASI_SON_TARIH': 'hedef_tarih', 'ASI_YAP_TARIH': 'yapilan_tarih', 
@@ -280,32 +279,24 @@ if uploaded_file:
             
             dusuk_oranli_birim_sayisi = len(ozet[ozet['oran'] < m_val])
             
-            # --- RİSKLİ ASM LİSTESİ + BİRİM ADI GÖSTERİMİ ---
+            # --- RİSKLİ ASM LİSTESİ (SADELEŞTİRİLMİŞ) ---
             riskli_asm_listesi = []
             for (ilce, asm), grup in ozet.groupby(['ilce', 'asm']):
                 
-                kirmizi_birimler_df = grup[grup['oran'] < m_val]
-                kirmizi_sayisi = len(kirmizi_birimler_df)
+                kirmizi_sayisi = len(grup[grup['oran'] < m_val])
                 
                 if kirmizi_sayisi > 0:
                     yesil_sayisi = len(grup[grup['oran'] >= t_val])
                     sari_sayisi = len(grup) - kirmizi_sayisi - yesil_sayisi
                     
-                    # BURADA 'birim' sütunu zaten BIRIM_ADI bilgisini tutuyor
-                    # Örn: "İstanbul Pendik 126 Nolu AHB (%45)"
-                    riskli_isimler = []
-                    for _, row in kirmizi_birimler_df.iterrows():
-                        riskli_isimler.append(f"{row['birim']} (%{row['oran']})")
-                    riskli_isimler_str = ", ".join(riskli_isimler)
-
+                    # DETAY KISMI KALDIRILDI
                     riskli_asm_listesi.append({
                         "İlçe": ilce, 
                         "ASM Adı": asm,
                         "Kırmızı Birim": kirmizi_sayisi, 
                         "Sarı Birim": sari_sayisi,
                         "Yeşil Birim": yesil_sayisi, 
-                        "Toplam Birim": len(grup),
-                        "Riskli Birimler (Detay)": riskli_isimler_str 
+                        "Toplam Birim": len(grup)
                     })
             
             riskli_asm_sayisi = len(riskli_asm_listesi)
@@ -360,7 +351,7 @@ if uploaded_file:
             with tab3:
                 rdf = pd.DataFrame(riskli_asm_listesi)
                 if not rdf.empty:
-                    # Sıralama: En çok kırmızı birim olan en üstte
+                    # Sıralama
                     rdf = rdf.sort_values(by="Kırmızı Birim", ascending=False)
                     
                     c_d1, c_d2 = st.columns([1,1])
@@ -370,8 +361,7 @@ if uploaded_file:
                     st.dataframe(rdf, column_config={
                         "Kırmızı Birim": st.column_config.NumberColumn(help=f"Alt Sınırın (%{m_val}) altında kalan birim sayısı"),
                         "Yeşil Birim": st.column_config.NumberColumn(help=f"Hedefin (%{t_val}) üzerinde olan birim sayısı"),
-                        "Sarı Birim": st.column_config.NumberColumn(help="Hedef ve Alt Sınır arasında kalan birim sayısı"),
-                        "Riskli Birimler (Detay)": st.column_config.TextColumn(help="Başarısız olan birimlerin isimleri", width="large")
+                        "Sarı Birim": st.column_config.NumberColumn(help="Hedef ve Alt Sınır arasında kalan birim sayısı")
                     }, use_container_width=True, hide_index=True)
                 else:
                     st.success("Tebrikler! Kriterlere uyan Riskli ASM bulunamadı.")
