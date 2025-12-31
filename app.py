@@ -17,7 +17,7 @@ def to_excel(df):
         worksheet = writer.sheets['Sheet1']
         for i, col in enumerate(df.columns):
             max_len = max(df[col].astype(str).map(len).max(), len(col)) + 2
-            if max_len > 50: max_len = 50
+            if max_len > 60: max_len = 60 # Birim isimleri uzun olabilir
             worksheet.set_column(i, i, max_len)
     return output.getvalue()
 
@@ -101,6 +101,7 @@ def create_pdf(df, title, info):
 
     pdf.set_font("Arial", size=8)
     for _, row in df.iterrows():
+        # Sayfa Sonu Kontrolü
         if pdf.get_y() > 175:
             pdf.add_page()
             pdf.set_font("Arial", 'B', 9)
@@ -112,7 +113,8 @@ def create_pdf(df, title, info):
 
         for i, item in enumerate(row):
             text = clean_text(str(item))
-            max_char = int(col_widths[i] / 1.8) 
+            # Çok uzun metinler için kırpma (Özellikle Birim Adı uzunsa)
+            max_char = int(col_widths[i] / 1.6) 
             if len(text) > max_char: text = text[:max_char-2] + ".."
             pdf.cell(col_widths[i], 8, text, 1, 0, 'C')
         pdf.ln()
@@ -123,9 +125,6 @@ def create_pdf(df, title, info):
 # -----------------------------------------------------------------------------
 @st.cache_data
 def load_data(file):
-    """
-    Yüklenen dosyayı okur, temizler ve önbelleğe (cache) alır.
-    """
     try:
         if file.name.endswith('.csv'):
             df = pd.read_csv(file, encoding='cp1254')
@@ -134,6 +133,7 @@ def load_data(file):
         
         df.columns = [c.strip() for c in df.columns]
         
+        # Sütun Eşleştirme (BIRIM_ADI -> birim olarak atanıyor)
         rename_map = {
             'ILCE': 'ilce', 'asm': 'asm', 'BIRIM_ADI': 'birim', 
             'ASI_SON_TARIH': 'hedef_tarih', 'ASI_YAP_TARIH': 'yapilan_tarih', 
@@ -172,21 +172,16 @@ st.markdown("---")
 st.sidebar.header("1. Veri Yükleme")
 uploaded_file = st.sidebar.file_uploader("Excel veya CSV Yükleyin", type=["xlsx", "csv"])
 
-# --- KRİTİK TEMİZLİK KODU ---
-# Eğer kullanıcı dosyayı kaldırdıysa (X'e bastıysa) veya sayfa yenilendiyse
-# tüm session state verilerini sıfırla ki ekranda eski veri kalmasın.
 if not uploaded_file:
     st.session_state.filtered_df = pd.DataFrame()
     st.session_state.has_run = False
     st.session_state.raw_data = None
     st.session_state.filter_info = ""
 
-# Session State Başlangıç Değerleri (Yoksa oluştur)
 if 'filtered_df' not in st.session_state: st.session_state.filtered_df = pd.DataFrame()
 if 'has_run' not in st.session_state: st.session_state.has_run = False
 
 if uploaded_file:
-    # Cache kullanarak veriyi yükle
     df = load_data(uploaded_file)
     
     if df is None:
@@ -210,7 +205,6 @@ if uploaded_file:
         dose_options = list(range(1, 10))
         selected_doses = st.multiselect("Aşı Dozu Seçin", options=dose_options, default=[])
 
-        # Tarih Aralığı
         if not df['hedef_tarih'].empty:
             min_date = df['hedef_tarih'].min().date()
             max_date = df['hedef_tarih'].max().date()
@@ -246,7 +240,6 @@ if uploaded_file:
                 
                 temp_df['basari_durumu'] = temp_df['yapilan_tarih'].notna().astype(int)
                 
-                # Header Bilgileri
                 date_str = f"{start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')}"
                 dose_str = ", ".join(map(str, selected_doses)) if selected_doses else ""
 
@@ -287,17 +280,34 @@ if uploaded_file:
             
             dusuk_oranli_birim_sayisi = len(ozet[ozet['oran'] < m_val])
             
+            # --- RİSKLİ ASM LİSTESİ + BİRİM ADI GÖSTERİMİ ---
             riskli_asm_listesi = []
             for (ilce, asm), grup in ozet.groupby(['ilce', 'asm']):
-                kirmizi_sayisi = len(grup[grup['oran'] < m_val])
+                
+                kirmizi_birimler_df = grup[grup['oran'] < m_val]
+                kirmizi_sayisi = len(kirmizi_birimler_df)
+                
                 if kirmizi_sayisi > 0:
                     yesil_sayisi = len(grup[grup['oran'] >= t_val])
                     sari_sayisi = len(grup) - kirmizi_sayisi - yesil_sayisi
+                    
+                    # BURADA 'birim' sütunu zaten BIRIM_ADI bilgisini tutuyor
+                    # Örn: "İstanbul Pendik 126 Nolu AHB (%45)"
+                    riskli_isimler = []
+                    for _, row in kirmizi_birimler_df.iterrows():
+                        riskli_isimler.append(f"{row['birim']} (%{row['oran']})")
+                    riskli_isimler_str = ", ".join(riskli_isimler)
+
                     riskli_asm_listesi.append({
-                        "İlçe": ilce, "ASM Adı": asm,
-                        "Kırmızı Birim": kirmizi_sayisi, "Sarı Birim": sari_sayisi,
-                        "Yeşil Birim": yesil_sayisi, "Toplam Birim": len(grup)
+                        "İlçe": ilce, 
+                        "ASM Adı": asm,
+                        "Kırmızı Birim": kirmizi_sayisi, 
+                        "Sarı Birim": sari_sayisi,
+                        "Yeşil Birim": yesil_sayisi, 
+                        "Toplam Birim": len(grup),
+                        "Riskli Birimler (Detay)": riskli_isimler_str 
                     })
+            
             riskli_asm_sayisi = len(riskli_asm_listesi)
 
             total_target = len(df_res)
@@ -350,14 +360,18 @@ if uploaded_file:
             with tab3:
                 rdf = pd.DataFrame(riskli_asm_listesi)
                 if not rdf.empty:
+                    # Sıralama: En çok kırmızı birim olan en üstte
                     rdf = rdf.sort_values(by="Kırmızı Birim", ascending=False)
+                    
                     c_d1, c_d2 = st.columns([1,1])
                     c_d1.download_button("📥 Excel İndir", data=to_excel(rdf), file_name='riskli_asm_ozet.xlsx', key='dl2')
                     c_d2.download_button("📄 PDF İndir", data=create_pdf(rdf, "Riskli Birim Olan ASM Listesi", meta), file_name='riskli_asm_ozet.pdf', key='dp2')
+                    
                     st.dataframe(rdf, column_config={
                         "Kırmızı Birim": st.column_config.NumberColumn(help=f"Alt Sınırın (%{m_val}) altında kalan birim sayısı"),
                         "Yeşil Birim": st.column_config.NumberColumn(help=f"Hedefin (%{t_val}) üzerinde olan birim sayısı"),
-                        "Sarı Birim": st.column_config.NumberColumn(help="Hedef ve Alt Sınır arasında kalan birim sayısı")
+                        "Sarı Birim": st.column_config.NumberColumn(help="Hedef ve Alt Sınır arasında kalan birim sayısı"),
+                        "Riskli Birimler (Detay)": st.column_config.TextColumn(help="Başarısız olan birimlerin isimleri", width="large")
                     }, use_container_width=True, hide_index=True)
                 else:
                     st.success("Tebrikler! Kriterlere uyan Riskli ASM bulunamadı.")
