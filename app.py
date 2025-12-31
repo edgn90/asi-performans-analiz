@@ -25,16 +25,13 @@ def create_pdf(df, title, info):
     """Veriyi PDF formatına çevirir. Yatay Mod (Landscape)."""
     class PDF(FPDF):
         def header(self):
-            # Logo
             try: self.image('logo.png', 10, 8, 33)
             except: pass
             
-            # Başlık
             self.set_y(10)
             self.set_font('Arial', 'B', 16)
             self.cell(0, 10, clean_text(title), 0, 1, 'C')
             
-            # Header Bilgileri
             self.set_font('Arial', '', 9)
             self.set_text_color(80, 80, 80)
             
@@ -128,7 +125,6 @@ def create_pdf(df, title, info):
 def load_data(file):
     """
     Yüklenen dosyayı okur, temizler ve önbelleğe (cache) alır.
-    Aynı dosya tekrar yüklenirse işlem yapmadan hafızadan getirir.
     """
     try:
         if file.name.endswith('.csv'):
@@ -136,10 +132,8 @@ def load_data(file):
         else:
             df = pd.read_excel(file)
         
-        # Sütun İsimlerini Temizle
         df.columns = [c.strip() for c in df.columns]
         
-        # Standart İsimlendirme
         rename_map = {
             'ILCE': 'ilce', 'asm': 'asm', 'BIRIM_ADI': 'birim', 
             'ASI_SON_TARIH': 'hedef_tarih', 'ASI_YAP_TARIH': 'yapilan_tarih', 
@@ -147,19 +141,15 @@ def load_data(file):
         }
         df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
         
-        # Doz Dönüşümü
         if 'doz' in df.columns: 
             df['doz'] = pd.to_numeric(df['doz'], errors='coerce').fillna(0).astype(int)
         else: 
             df['doz'] = 1
             
-        # Tarih Dönüşümü (dayfirst=True Önemli)
         df['hedef_tarih'] = pd.to_datetime(df['hedef_tarih'], dayfirst=True, errors='coerce')
         df['yapilan_tarih'] = pd.to_datetime(df['yapilan_tarih'], dayfirst=True, errors='coerce')
         
-        # Geçersiz tarihleri temizle
         df = df.dropna(subset=['hedef_tarih'])
-        
         return df
     except Exception as e:
         return None
@@ -182,12 +172,21 @@ st.markdown("---")
 st.sidebar.header("1. Veri Yükleme")
 uploaded_file = st.sidebar.file_uploader("Excel veya CSV Yükleyin", type=["xlsx", "csv"])
 
-# Session State Başlangıç Değerleri
+# --- KRİTİK TEMİZLİK KODU ---
+# Eğer kullanıcı dosyayı kaldırdıysa (X'e bastıysa) veya sayfa yenilendiyse
+# tüm session state verilerini sıfırla ki ekranda eski veri kalmasın.
+if not uploaded_file:
+    st.session_state.filtered_df = pd.DataFrame()
+    st.session_state.has_run = False
+    st.session_state.raw_data = None
+    st.session_state.filter_info = ""
+
+# Session State Başlangıç Değerleri (Yoksa oluştur)
 if 'filtered_df' not in st.session_state: st.session_state.filtered_df = pd.DataFrame()
 if 'has_run' not in st.session_state: st.session_state.has_run = False
 
 if uploaded_file:
-    # --- CACHE KULLANARAK VERİYİ YÜKLE ---
+    # Cache kullanarak veriyi yükle
     df = load_data(uploaded_file)
     
     if df is None:
@@ -230,31 +229,27 @@ if uploaded_file:
     # 6. ANALİZ İŞLEMİ
     # -----------------------------------------------------------------------------
     if submit_button:
-        # Tarih Aralığı Kontrolü
         if len(date_range) != 2:
              st.error("⚠️ Lütfen tarih aralığı için hem Başlangıç hem de Bitiş tarihini seçiniz.")
         else:
             with st.spinner('Veriler analiz ediliyor...'):
                 temp_df = df.copy()
                 
-                # --- Filtreleri Uygula ---
+                # Filtreler
                 if selected_ilce != "Tümü": temp_df = temp_df[temp_df['ilce'] == selected_ilce]
                 if selected_asm != "Tümü": temp_df = temp_df[temp_df['asm'] == selected_asm]
                 if selected_doses: temp_df = temp_df[temp_df['doz'].isin(selected_doses)]
                 
-                # Tarih Filtresi
                 start_date, end_date = date_range
                 mask = (temp_df['hedef_tarih'].dt.date >= start_date) & (temp_df['hedef_tarih'].dt.date <= end_date)
                 temp_df = temp_df[mask]
                 
-                # Başarı Durumu Hesapla
                 temp_df['basari_durumu'] = temp_df['yapilan_tarih'].notna().astype(int)
                 
                 # Header Bilgileri
                 date_str = f"{start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')}"
                 dose_str = ", ".join(map(str, selected_doses)) if selected_doses else ""
 
-                # Sonuçları Kaydet
                 st.session_state.filtered_df = temp_df
                 st.session_state.filter_info = f"{selected_ilce} / {selected_asm}"
                 st.session_state.target_val = target_val
