@@ -173,7 +173,7 @@ st.markdown("---")
 # 3. VERİ YÜKLEME VE ÖN İŞLEME
 # -----------------------------------------------------------------------------
 st.sidebar.header("1. Veri Yükleme")
-uploaded_file = st.sidebar.file_uploader("Excel veya CSV Yükleyin", type=["xlsx", "csv"])
+uploaded_file = st.sidebar.file_uploader("Excel veya CSV Yükleyin", type=["xlsx", "csv"], key="loader_v1")
 
 # Session State Tanımları
 if 'filtered_df' not in st.session_state: st.session_state.filtered_df = pd.DataFrame()
@@ -448,3 +448,4 @@ if uploaded_file:
         st.info("👈 Analizi başlatmak için soldaki menüden **'Filtreleri Uygula'** butonuna basınız.")
 else:
     st.info("⬅️ Lütfen sol menüden Excel dosyanızı yükleyerek başlayın.")
+
