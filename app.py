@@ -280,6 +280,15 @@ if uploaded_file:
             ).reset_index()
             ozet['oran'] = (ozet['yapilan'] / ozet['toplam'] * 100).round(2)
             
+            # --- YENİ EKLENEN KISIM: DURUM BELİRLEME ---
+            # Kullanıcının seçtiği hedef ve alt sınır değerlerine göre durumu belirle
+            def get_status_text(rate, target, minimum):
+                if rate >= target: return "YEŞİL"
+                elif rate >= minimum: return "SARI"
+                else: return "KIRMIZI"
+            
+            ozet['Durum'] = ozet['oran'].apply(lambda x: get_status_text(x, t_val, m_val))
+            
             dusuk_oranli_sayisi = len(ozet[ozet['oran'] < m_val])
             
             riskli_asm_listesi = []
@@ -307,9 +316,6 @@ if uploaded_file:
             # --- GRAFİKLER ---
             g1, g2 = st.columns(2)
             
-            # Grafik 1: Bar (GÜNCELLENEN KISIM - AHB BAZLI)
-            # Eğer "Tümü" seçiliyse İLÇE bazlı göster.
-            # Eğer ilçe seçiliyse (veya ASM) BİRİM (AHB) bazlı göster.
             if st.session_state.filter_info.startswith("Tümü"):
                 group_col = 'ilce'
                 x_label = "İlçe"
@@ -317,18 +323,13 @@ if uploaded_file:
             else:
                 group_col = 'birim'
                 x_label = "Aile Hekimliği Birimi (AHB)"
-                # Birim sayısı çoksa grafik sıkışmasın diye yüksekliği artırabiliriz
                 chart_height = 600
                 
             chart_data = df_res.groupby(group_col).agg(toplam=('basari_durumu','count'), yapilan=('basari_durumu','sum')).reset_index()
             
             if not chart_data.empty:
                 chart_data['oran'] = (chart_data['yapilan'] / chart_data['toplam'] * 100).round(2)
-                # Sıralama: En yüksekten en düşüğe (veya tam tersi) - Genelde yüksek performans solda istenir ama
-                # isim listesi olduğu için isme göre veya orana göre sıralanabilir.
-                # Şimdilik orana göre sıralayalım:
                 chart_data = chart_data.sort_values(by='oran', ascending=False)
-
                 chart_data['Renk'] = chart_data['oran'].apply(lambda x: 'Yeşil' if x >= t_val else ('Sarı' if x >= m_val else 'Kırmızı'))
                 
                 fig_bar = px.bar(chart_data, x=group_col, y='oran', color='Renk', 
@@ -339,7 +340,6 @@ if uploaded_file:
                 fig_bar.update_traces(textposition='outside')
                 g1.plotly_chart(fig_bar, use_container_width=True)
 
-            # Grafik 2: Trend
             trend = df_res.copy()
             trend['AY'] = trend['hedef_tarih'].dt.strftime('%Y-%m')
             trend_data = trend.groupby('AY').agg({'basari_durumu':['sum','count']}).reset_index()
@@ -348,7 +348,6 @@ if uploaded_file:
             fig_line = px.line(trend_data, x='AY', y='ORAN', title="Zaman Serisi Trendi", markers=True)
             g2.plotly_chart(fig_line, use_container_width=True)
 
-            # Isı Haritası
             st.subheader("🌡️ İlçe Bazlı Dönemsel Isı Haritası")
             heatmap_data = df_res.copy()
             heatmap_data['AY'] = heatmap_data['hedef_tarih'].dt.strftime('%Y-%m')
@@ -362,10 +361,21 @@ if uploaded_file:
             tab1, tab2, tab3 = st.tabs(["📊 Birim Performans", "⚠️ Düşük Oranlılar", "🚨 Riskli ASM Listesi (Özet)"])
 
             with tab1:
+                # Durum sütununu en sona, oranın yanına alalım
+                cols = list(ozet.columns)
+                if 'Durum' in cols:
+                    cols.remove('Durum')
+                    cols.append('Durum') # Sona ekle
+                    ozet = ozet[cols]
+
                 c_d1, c_d2 = st.columns([1,1])
                 c_d1.download_button("📥 Excel İndir", data=to_excel(ozet), file_name='birim_perf.xlsx')
                 c_d2.download_button("📄 PDF İndir", data=create_pdf(ozet, "Birim Performans Raporu", meta), file_name='birim_perf.pdf')
-                st.dataframe(ozet, column_config={"oran": st.column_config.ProgressColumn("Başarı", format="%.2f%%", min_value=0, max_value=100)}, use_container_width=True, hide_index=True)
+                
+                st.dataframe(ozet, column_config={
+                    "oran": st.column_config.ProgressColumn("Başarı", format="%.2f%%", min_value=0, max_value=100),
+                    "Durum": st.column_config.TextColumn("Perf. Durumu", help="Hedef ve Alt Sınıra göre")
+                }, use_container_width=True, hide_index=True)
 
             with tab2:
                 low = ozet[ozet['oran'] < m_val].sort_values(by='oran')
