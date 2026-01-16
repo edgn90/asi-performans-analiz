@@ -25,7 +25,7 @@ def to_excel(df):
     return output.getvalue()
 
 def create_pdf(df, title, info):
-    """PDF Oluşturucu (Yatay, Dinamik Header, Akıllı Sütun)"""
+    """PDF Oluşturucu"""
     class PDF(FPDF):
         def header(self):
             try:
@@ -171,7 +171,6 @@ if uploaded_file:
             else:
                 df['doz'] = 1
             
-            # Tarih Okuma
             df['hedef_tarih'] = pd.to_datetime(df['hedef_tarih'], errors='coerce')
             df['yapilan_tarih'] = pd.to_datetime(df['yapilan_tarih'], errors='coerce')
             df = df.dropna(subset=['hedef_tarih'])
@@ -258,18 +257,16 @@ if uploaded_file:
         if df_res.empty:
             st.warning("⚠️ Seçilen kriterlere uygun veri bulunamadı.")
         else:
-            # --- ANA BAŞARI ORANI (YENİ EKLENEN ÖZELLİK) ---
+            # --- ANA BAŞARI ORANI ---
             total_target = len(df_res)
             total_done = df_res['basari_durumu'].sum()
             genel_oran = (total_done / total_target * 100) if total_target > 0 else 0
             
-            # Başlık Mantığı
             if meta['ilce'] != "Tümü":
                 ana_baslik = f"{meta['ilce']} - BAŞARI ORANI"
             else:
                 ana_baslik = "İL GENEL BAŞARI ORANI (Tüm İlçeler)"
             
-            # Dev Gösterge
             st.markdown(f"""
             <div style="text-align: center; background-color: #f8f9fa; border: 1px solid #dee2e6; padding: 20px; border-radius: 12px; margin-bottom: 25px;">
                 <h3 style="color: #6c757d; margin: 0; font-weight: 500; font-size: 1.5rem;">{ana_baslik}</h3>
@@ -277,7 +274,7 @@ if uploaded_file:
             </div>
             """, unsafe_allow_html=True)
             
-            # --- Diğer Hesaplamalar ---
+            # --- Özet Hesaplama ---
             ozet = df_res.groupby(['ilce', 'asm', 'birim']).agg(
                 toplam=('basari_durumu', 'count'), yapilan=('basari_durumu', 'sum')
             ).reset_index()
@@ -297,7 +294,7 @@ if uploaded_file:
                     })
             riskli_asm_sayisi = len(riskli_asm_listesi)
             
-            # Alt KPI Kartları
+            # KPI Kartları
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("🔵 Toplam Hedef", f"{total_target:,}".replace(",", "."))
             c2.metric("🟢 Toplam Yapılan", f"{total_done:,}".replace(",", "."))
@@ -307,17 +304,42 @@ if uploaded_file:
             st.caption(f"📍 Filtre: {st.session_state.filter_info}")
             st.markdown("---")
 
-            # Grafikler
+            # --- GRAFİKLER ---
             g1, g2 = st.columns(2)
-            group_col = 'ilce' if st.session_state.filter_info.startswith("Tümü") else 'asm'
+            
+            # Grafik 1: Bar (GÜNCELLENEN KISIM - AHB BAZLI)
+            # Eğer "Tümü" seçiliyse İLÇE bazlı göster.
+            # Eğer ilçe seçiliyse (veya ASM) BİRİM (AHB) bazlı göster.
+            if st.session_state.filter_info.startswith("Tümü"):
+                group_col = 'ilce'
+                x_label = "İlçe"
+                chart_height = 500
+            else:
+                group_col = 'birim'
+                x_label = "Aile Hekimliği Birimi (AHB)"
+                # Birim sayısı çoksa grafik sıkışmasın diye yüksekliği artırabiliriz
+                chart_height = 600
+                
             chart_data = df_res.groupby(group_col).agg(toplam=('basari_durumu','count'), yapilan=('basari_durumu','sum')).reset_index()
+            
             if not chart_data.empty:
                 chart_data['oran'] = (chart_data['yapilan'] / chart_data['toplam'] * 100).round(2)
+                # Sıralama: En yüksekten en düşüğe (veya tam tersi) - Genelde yüksek performans solda istenir ama
+                # isim listesi olduğu için isme göre veya orana göre sıralanabilir.
+                # Şimdilik orana göre sıralayalım:
+                chart_data = chart_data.sort_values(by='oran', ascending=False)
+
                 chart_data['Renk'] = chart_data['oran'].apply(lambda x: 'Yeşil' if x >= t_val else ('Sarı' if x >= m_val else 'Kırmızı'))
-                fig_bar = px.bar(chart_data, x=group_col, y='oran', color='Renk', color_discrete_map={'Yeşil':'#198754', 'Sarı':'#ffc107', 'Kırmızı':'#dc3545'}, text='oran', title="Performans Grafiği")
+                
+                fig_bar = px.bar(chart_data, x=group_col, y='oran', color='Renk', 
+                                 color_discrete_map={'Yeşil':'#198754', 'Sarı':'#ffc107', 'Kırmızı':'#dc3545'},
+                                 text='oran', title=f"Performans Dağılımı ({x_label})", height=chart_height)
+                
+                fig_bar.update_layout(xaxis_title=x_label, yaxis_title="Başarı Oranı (%)")
                 fig_bar.update_traces(textposition='outside')
                 g1.plotly_chart(fig_bar, use_container_width=True)
 
+            # Grafik 2: Trend
             trend = df_res.copy()
             trend['AY'] = trend['hedef_tarih'].dt.strftime('%Y-%m')
             trend_data = trend.groupby('AY').agg({'basari_durumu':['sum','count']}).reset_index()
