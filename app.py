@@ -60,20 +60,25 @@ def create_pdf(df, title, info):
             self.cell(0, 5, clean_text(threshold_str), 0, 1, 'R')
             self.ln(3)
 
-            # --- YÖNETİCİ ÖZET ALANI ---
-            if info.get('ilce') == "Tümü":
-                basari_etiket = "IL GENEL BASARI ORANI"
-            else:
-                basari_etiket = f"{clean_text(info.get('ilce')).upper()} BASARI ORANI"
-            
-            genel_oran = info.get('genel_basari_orani', 0)
+            # --- YÖNETİCİ ÖZET ALANI (DİNAMİK) ---
             dusuk_sayisi = info.get('dusuk_birim_sayisi', 0)
             
-            summary_text = f"{basari_etiket}: %{genel_oran:.2f}   |   Acil Mudahale Gereken Birim Sayisi: {dusuk_sayisi}"
+            # Eğer 'sadece_sayi_goster' modu aktifse (Birim Başarı Durumu sekmesi için)
+            if info.get('sadece_sayi_goster') == True:
+                summary_text = f"ACIL MUDAHALE GEREKEN (KIRMIZI) BIRIM SAYISI: {dusuk_sayisi}"
+            else:
+                # Diğer sekmeler için standart görünüm (Oran + Sayı)
+                if info.get('ilce') == "Tümü":
+                    basari_etiket = "IL GENEL BASARI ORANI"
+                else:
+                    basari_etiket = f"{clean_text(info.get('ilce')).upper()} BASARI ORANI"
+                
+                genel_oran = info.get('genel_basari_orani', 0)
+                summary_text = f"{basari_etiket}: %{genel_oran:.2f}   |   Acil Mudahale Gereken Birim Sayisi: {dusuk_sayisi}"
             
             self.set_font('Arial', 'B', 11)
             self.set_text_color(0, 0, 0)
-            self.set_fill_color(230, 230, 230)
+            self.set_fill_color(230, 230, 230) # Gri Arka Plan
             self.cell(0, 10, summary_text, 0, 1, 'C', fill=True)
             
             self.ln(5)
@@ -391,7 +396,7 @@ if uploaded_file:
                     "oran": st.column_config.ProgressColumn("Başarı Oranı", format="%.2f%%", min_value=0, max_value=100)
                 }, use_container_width=True, hide_index=True)
 
-            # Sekme 2: Birim Başarı Durumu (SADELEŞTİRİLMİŞ & METİNSEL)
+            # Sekme 2: Birim Başarı Durumu (SADELEŞTİRİLMİŞ & ÖZEL PDF)
             with tab2:
                 # Durum metni fonksiyonu
                 def get_status_text(rate, target, minimum):
@@ -402,24 +407,28 @@ if uploaded_file:
                 ozet_status = ozet.copy()
                 ozet_status['Başarı Durumu'] = ozet_status['oran'].apply(lambda x: get_status_text(x, t_val, m_val))
                 
-                # Rakamları kaldır (toplam, yapilan, oran)
-                # Sadece temel bilgiler (ilce, asm, birim) ve durum kalsın
+                # Sadece temel sütunlar
                 cols_to_keep = ['ilce', 'asm', 'birim', 'Başarı Durumu']
                 ozet_status_final = ozet_status[cols_to_keep]
                 
-                # Renklendirme fonksiyonu (Sadece tablo görünümü için)
+                # Renklendirme fonksiyonu
                 def color_status(val):
                     color = ''
-                    if val == "Başarılı": color = 'background-color: #d4edda; color: #155724' # Yeşilimsi
-                    elif val == "Geliştirilmesi Gereken": color = 'background-color: #fff3cd; color: #856404' # Sarımsı
-                    elif val == "Acil Müdahale": color = 'background-color: #f8d7da; color: #721c24' # Kırmızımsı
+                    if val == "Başarılı": color = 'background-color: #d4edda; color: #155724'
+                    elif val == "Geliştirilmesi Gereken": color = 'background-color: #fff3cd; color: #856404'
+                    elif val == "Acil Müdahale": color = 'background-color: #f8d7da; color: #721c24'
                     return color
 
                 c_d1, c_d2 = st.columns([1,1])
                 c_d1.download_button("📥 Excel İndir", data=to_excel(ozet_status_final), file_name='birim_basari_durumu.xlsx', key='bd_xls')
-                c_d2.download_button("📄 PDF İndir", data=create_pdf(ozet_status_final, "Birim Basari Durumu", meta), file_name='birim_basari_durumu.pdf', key='bd_pdf')
                 
-                # Pandas Styler kullanarak renklendirme
+                # --- ÖZEL PDF AYARI ---
+                # Bu sekme için "sadece_sayi_goster" modunu aktif eden geçici meta oluşturuyoruz
+                meta_status = meta.copy()
+                meta_status['sadece_sayi_goster'] = True
+                
+                c_d2.download_button("📄 PDF İndir", data=create_pdf(ozet_status_final, "Birim Basari Durumu", meta_status), file_name='birim_basari_durumu.pdf', key='bd_pdf')
+                
                 st.dataframe(ozet_status_final.style.map(color_status, subset=['Başarı Durumu']), use_container_width=True, hide_index=True)
 
             # Sekme 3: Düşük Oranlılar
