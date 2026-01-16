@@ -27,7 +27,7 @@ def to_excel(df):
 def create_pdf(df, title, info):
     """
     PDF Oluşturucu
-    Özellikler: Yatay Mod, Yönetici Özeti (Header)
+    Özellikler: Standartlaştırılmış Terminoloji
     """
     class PDF(FPDF):
         def header(self):
@@ -60,25 +60,24 @@ def create_pdf(df, title, info):
             self.cell(0, 5, clean_text(threshold_str), 0, 1, 'R')
             self.ln(3)
 
-            # --- YÖNETİCİ ÖZET ALANI (DİNAMİK) ---
+            # --- YÖNETİCİ ÖZET ALANI ---
             dusuk_sayisi = info.get('dusuk_birim_sayisi', 0)
             
-            # Eğer 'sadece_sayi_goster' modu aktifse (Birim Başarı Durumu sekmesi için)
+            # PDF başlıklarında da standart dili kullanıyoruz
             if info.get('sadece_sayi_goster') == True:
-                summary_text = f"ACIL MUDAHALE GEREKEN (KIRMIZI) BIRIM SAYISI: {dusuk_sayisi}"
+                summary_text = f"ACIL MUDAHALE GEREKEN BIRIM SAYISI: {dusuk_sayisi}"
             else:
-                # Diğer sekmeler için standart görünüm (Oran + Sayı)
                 if info.get('ilce') == "Tümü":
                     basari_etiket = "IL GENEL BASARI ORANI"
                 else:
                     basari_etiket = f"{clean_text(info.get('ilce')).upper()} BASARI ORANI"
                 
                 genel_oran = info.get('genel_basari_orani', 0)
-                summary_text = f"{basari_etiket}: %{genel_oran:.2f}   |   Acil Mudahale Gereken Birim Sayisi: {dusuk_sayisi}"
+                summary_text = f"{basari_etiket}: %{genel_oran:.2f}   |   Acil Mudahale Gereken Birim: {dusuk_sayisi}"
             
             self.set_font('Arial', 'B', 11)
             self.set_text_color(0, 0, 0)
-            self.set_fill_color(230, 230, 230) # Gri Arka Plan
+            self.set_fill_color(230, 230, 230)
             self.cell(0, 10, summary_text, 0, 1, 'C', fill=True)
             
             self.ln(5)
@@ -293,7 +292,7 @@ if uploaded_file:
             total_done = df_res['basari_durumu'].sum()
             genel_oran = (total_done / total_target * 100) if total_target > 0 else 0
             
-            # Özet Tabloyu Hazırla
+            # Özet Tablo
             ozet = df_res.groupby(['ilce', 'asm', 'birim']).agg(
                 toplam=('basari_durumu', 'count'), yapilan=('basari_durumu', 'sum')
             ).reset_index()
@@ -301,7 +300,7 @@ if uploaded_file:
             
             dusuk_oranli_sayisi = len(ozet[ozet['oran'] < m_val])
             
-            # PDF Metadata Güncelleme
+            # Metadata Güncelleme
             meta['genel_basari_orani'] = genel_oran
             meta['dusuk_birim_sayisi'] = dusuk_oranli_sayisi
             st.session_state.report_meta = meta 
@@ -314,8 +313,12 @@ if uploaded_file:
                     yesil = len(grup[grup['oran'] >= t_val])
                     sari = len(grup) - kirmizi - yesil
                     riskli_asm_listesi.append({
-                        "İlçe": ilce, "ASM Adı": asm, "Kırmızı Birim": kirmizi,
-                        "Sarı Birim": sari, "Yeşil Birim": yesil, "Toplam Birim": len(grup)
+                        "İlçe": ilce, 
+                        "ASM Adı": asm, 
+                        "Acil Müdahale": kirmizi, # İsim değişti
+                        "Geliştirilmeli": sari,   # İsim değişti
+                        "Başarılı": yesil,        # İsim değişti
+                        "Toplam Birim": len(grup)
                     })
             riskli_asm_sayisi = len(riskli_asm_listesi)
             
@@ -335,8 +338,8 @@ if uploaded_file:
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("🔵 Toplam Hedef", f"{total_target:,}".replace(",", "."))
             c2.metric("🟢 Toplam Yapılan", f"{total_done:,}".replace(",", "."))
-            c3.metric("🟠 Düşük Oranlı Birim", f"{dusuk_oranli_sayisi}")
-            c4.metric("🔴 Riskli ASM Sayısı", f"{riskli_asm_sayisi}")
+            c3.metric("🟠 Acil Müdahale (Birim)", f"{dusuk_oranli_sayisi}")
+            c4.metric("🔴 Acil Müdahale (ASM)", f"{riskli_asm_sayisi}")
             
             st.caption(f"📍 Filtre: {st.session_state.filter_info}")
             st.markdown("---")
@@ -356,8 +359,19 @@ if uploaded_file:
             if not chart_data.empty:
                 chart_data['oran'] = (chart_data['yapilan'] / chart_data['toplam'] * 100).round(2)
                 chart_data = chart_data.sort_values(by='oran', ascending=False)
-                chart_data['Renk'] = chart_data['oran'].apply(lambda x: 'Yeşil' if x >= t_val else ('Sarı' if x >= m_val else 'Kırmızı'))
-                fig_bar = px.bar(chart_data, x=group_col, y='oran', color='Renk', color_discrete_map={'Yeşil':'#198754', 'Sarı':'#ffc107', 'Kırmızı':'#dc3545'}, text='oran', title=f"Performans Dağılımı ({x_label})", height=chart_height)
+                
+                # Yeni Terminoloji ile Renklendirme
+                def get_chart_status(x):
+                    if x >= t_val: return 'Başarılı'
+                    elif x >= m_val: return 'Geliştirilmeli'
+                    else: return 'Acil Müdahale'
+
+                chart_data['Durum'] = chart_data['oran'].apply(get_chart_status)
+                
+                fig_bar = px.bar(chart_data, x=group_col, y='oran', color='Durum', 
+                                 color_discrete_map={'Başarılı':'#198754', 'Geliştirilmeli':'#ffc107', 'Acil Müdahale':'#dc3545'},
+                                 text='oran', title=f"Performans Dağılımı ({x_label})", height=chart_height)
+                
                 fig_bar.update_layout(xaxis_title=x_label, yaxis_title="Başarı Oranı (%)")
                 fig_bar.update_traces(textposition='outside')
                 g1.plotly_chart(fig_bar, use_container_width=True)
@@ -378,13 +392,12 @@ if uploaded_file:
                 fig_heat = px.imshow(pivot_table, labels=dict(x="Ay", y="İlçe", color="Başarı (%)"), color_continuous_scale='RdYlGn', text_auto='.1f', aspect="auto")
                 st.plotly_chart(fig_heat, use_container_width=True)
 
-            # --- SEKMELER (GÜNCELLENMİŞ YAPI) ---
+            # --- SEKMELER (STANDARTLAŞTIRILMIŞ) ---
             st.subheader("📋 Detaylı Raporlar")
-            tab1, tab2, tab3, tab4 = st.tabs(["📊 Birim Performans", "🚦 Birim Başarı Durumu", "⚠️ Düşük Oranlılar", "🚨 Riskli ASM Listesi"])
+            tab1, tab2, tab3, tab4 = st.tabs(["📊 Birim Performans", "🚦 Birim Başarı Durumu", "⚠️ Acil Müdahale Gerekenler", "🚨 Riskli ASM Listesi"])
 
             # Sekme 1: Birim Performans (SAYISAL)
             with tab1:
-                # Sadece sayısal veriler
                 ozet_num = ozet.copy()
                 if 'Durum' in ozet_num.columns: ozet_num = ozet_num.drop(columns=['Durum'])
                 
@@ -396,34 +409,29 @@ if uploaded_file:
                     "oran": st.column_config.ProgressColumn("Başarı Oranı", format="%.2f%%", min_value=0, max_value=100)
                 }, use_container_width=True, hide_index=True)
 
-            # Sekme 2: Birim Başarı Durumu (SADELEŞTİRİLMİŞ & ÖZEL PDF)
+            # Sekme 2: Birim Başarı Durumu (YENİ TERMİNOLOJİ)
             with tab2:
-                # Durum metni fonksiyonu
                 def get_status_text(rate, target, minimum):
                     if rate >= target: return "Başarılı"
-                    elif rate >= minimum: return "Geliştirilmesi Gereken"
+                    elif rate >= minimum: return "Geliştirilmeli"
                     else: return "Acil Müdahale"
                 
                 ozet_status = ozet.copy()
                 ozet_status['Başarı Durumu'] = ozet_status['oran'].apply(lambda x: get_status_text(x, t_val, m_val))
                 
-                # Sadece temel sütunlar
                 cols_to_keep = ['ilce', 'asm', 'birim', 'Başarı Durumu']
                 ozet_status_final = ozet_status[cols_to_keep]
                 
-                # Renklendirme fonksiyonu
                 def color_status(val):
                     color = ''
                     if val == "Başarılı": color = 'background-color: #d4edda; color: #155724'
-                    elif val == "Geliştirilmesi Gereken": color = 'background-color: #fff3cd; color: #856404'
+                    elif val == "Geliştirilmeli": color = 'background-color: #fff3cd; color: #856404'
                     elif val == "Acil Müdahale": color = 'background-color: #f8d7da; color: #721c24'
                     return color
 
                 c_d1, c_d2 = st.columns([1,1])
                 c_d1.download_button("📥 Excel İndir", data=to_excel(ozet_status_final), file_name='birim_basari_durumu.xlsx', key='bd_xls')
                 
-                # --- ÖZEL PDF AYARI ---
-                # Bu sekme için "sadece_sayi_goster" modunu aktif eden geçici meta oluşturuyoruz
                 meta_status = meta.copy()
                 meta_status['sadece_sayi_goster'] = True
                 
@@ -431,19 +439,20 @@ if uploaded_file:
                 
                 st.dataframe(ozet_status_final.style.map(color_status, subset=['Başarı Durumu']), use_container_width=True, hide_index=True)
 
-            # Sekme 3: Düşük Oranlılar
+            # Sekme 3: Acil Müdahale Gerekenler (Eski adıyla Düşük Oranlılar)
             with tab3:
                 low = ozet[ozet['oran'] < m_val].sort_values(by='oran')
                 c_d1, c_d2 = st.columns([1,1])
-                c_d1.download_button("📥 Excel İndir", data=to_excel(low), file_name='dusuk_oran.xlsx', key='dl1')
-                c_d2.download_button("📄 PDF İndir", data=create_pdf(low, "Dusuk Oranli Birimler", meta), file_name='dusuk_oran.pdf', key='dp1')
+                c_d1.download_button("📥 Excel İndir", data=to_excel(low), file_name='acil_mudahale_birimler.xlsx', key='dl1')
+                c_d2.download_button("📄 PDF İndir", data=create_pdf(low, "Acil Mudahale Gereken Birimler", meta), file_name='acil_mudahale_birimler.pdf', key='dp1')
                 st.dataframe(low, column_config={"oran": st.column_config.NumberColumn("Başarı", format="%.2f%%")}, use_container_width=True, hide_index=True)
 
-            # Sekme 4: Riskli ASM
+            # Sekme 4: Riskli ASM Listesi
             with tab4:
                 rdf = pd.DataFrame(riskli_asm_listesi)
                 if not rdf.empty:
-                    rdf = rdf.sort_values(by="Kırmızı Birim", ascending=False)
+                    # Sıralama: Acil Müdahale sayısına göre
+                    rdf = rdf.sort_values(by="Acil Müdahale", ascending=False)
                     c_d1, c_d2 = st.columns([1,1])
                     c_d1.download_button("📥 Excel İndir", data=to_excel(rdf), file_name='riskli_asm_ozet.xlsx', key='dl2')
                     c_d2.download_button("📄 PDF İndir", data=create_pdf(rdf, "Riskli ASM Ozet Listesi", meta), file_name='riskli_asm_ozet.pdf', key='dp2')
