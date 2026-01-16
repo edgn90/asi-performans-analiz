@@ -26,8 +26,10 @@ def to_excel(df):
 
 def create_pdf(df, title, info):
     """
-    PDF Oluşturucu
-    Özellikler: Yatay Mod, Yönetici Özeti (Header)
+    PDF Oluşturucu - GÜNCELLENMİŞ VERSİYON
+    Düzeltmeler: 
+    1. Sayfa geçişlerinde font büyüklüğü/kalınlığı sorunu giderildi.
+    2. 'Başarı Durumu' sütununun sıkışması engellendi.
     """
     class PDF(FPDF):
         def header(self):
@@ -63,11 +65,9 @@ def create_pdf(df, title, info):
             # --- YÖNETİCİ ÖZET ALANI ---
             dusuk_sayisi = info.get('dusuk_birim_sayisi', 0)
             
-            # "Birim Başarı Durumu" sekmesi için özel başlık (Sadece Sayı)
             if info.get('sadece_sayi_goster') == True:
                 summary_text = f"ACIL MUDAHALE GEREKEN BIRIM SAYISI: {dusuk_sayisi}"
             else:
-                # Diğer sekmeler için standart başlık (Oran + Sayı)
                 if info.get('ilce') == "Tümü":
                     basari_etiket = "IL GENEL BASARI ORANI"
                 else:
@@ -93,7 +93,6 @@ def create_pdf(df, title, info):
 
     def clean_text(text):
         if not isinstance(text, str): return str(text)
-        # Emojileri temizle
         text = text.replace("🔴", "").replace("🟢", "").replace("🟠", "").replace("✅", "").replace("⚠️", "").replace("🚨", "")
         replacements = {
             'ğ': 'g', 'Ğ': 'G', 'ş': 's', 'Ş': 'S', 'ı': 'i', 'İ': 'I', 
@@ -107,14 +106,28 @@ def create_pdf(df, title, info):
     pdf.alias_nb_pages()
     pdf.add_page()
     
-    # Sütun Genişliği
+    # --- AKILLI SÜTUN GENİŞLİĞİ HESAPLAMA (DÜZELTİLDİ) ---
     available_width = 275 
     max_lens = []
+    
     for col in df.columns:
+        # Başlığın uzunluğu
         max_l = len(str(col))
+        
+        # İçeriğin uzunluğu (İlk 50 satıra bakarak)
         for val in df[col].head(50):
             val_l = len(str(val))
             if val_l > max_l: max_l = val_l
+        
+        # --- ÖZEL AYARLAR: Sütun dengeleme ---
+        # ASM ve Birim adları çok uzun olabiliyor, bunları hesaplamada sınırlayalım ki diğerlerine yer kalsın
+        if col in ['asm', 'birim', 'ASM Adı']:
+            if max_l > 35: max_l = 35 
+            
+        # Başarı Durumu sütununa öncelik ver (Kesilmemesi için suni olarak büyüt)
+        if col in ['Başarı Durumu', 'Durum']:
+            if max_l < 20: max_l = 25 # En az 25 karakterlik yer ayır
+            
         max_lens.append(max_l)
     
     total_len = sum(max_lens)
@@ -122,7 +135,7 @@ def create_pdf(df, title, info):
     if total_len > 0:
         for l in max_lens:
             w = (l / total_len) * available_width
-            if w < 20: w = 20
+            if w < 20: w = 20 # Minimum genişlik
             col_widths.append(w)
     else:
         col_widths = [available_width]
@@ -132,7 +145,7 @@ def create_pdf(df, title, info):
         factor = available_width / final_total
         col_widths = [w * factor for w in col_widths]
 
-    # Başlıklar
+    # --- TABLO BAŞLIKLARI (İLK SAYFA) ---
     pdf.set_font("Arial", 'B', 9)
     pdf.set_fill_color(220, 230, 240)
     pdf.set_text_color(0, 0, 0)
@@ -140,19 +153,29 @@ def create_pdf(df, title, info):
         pdf.cell(col_widths[i], 10, clean_text(col), 1, 0, 'C', fill=True)
     pdf.ln()
 
-    # Veriler
-    pdf.set_font("Arial", size=8)
+    # --- VERİLER ---
+    # Başlangıç Fontu (Normal, 8pt)
+    pdf.set_font("Arial", '', 8)
+    
     for _, row in df.iterrows():
+        # Sayfa Sonu Kontrolü
         if pdf.get_y() > 175:
             pdf.add_page()
+            
+            # Yeni sayfada tablo başlıklarını tekrar çiz
             pdf.set_font("Arial", 'B', 9)
             pdf.set_fill_color(220, 230, 240)
             for i, col in enumerate(df.columns):
                 pdf.cell(col_widths[i], 10, clean_text(col), 1, 0, 'C', fill=True)
             pdf.ln()
+            
+            # --- KRİTİK DÜZELTME: Veri için fontu tekrar Normale çevir ---
+            # Bunu yapmazsak Header'dan gelen Bold ayarı veriye bulaşır.
+            pdf.set_font("Arial", '', 8)
 
         for i, item in enumerate(row):
             text = clean_text(str(item))
+            # Metin sığdırma (Uzun metinleri kesip .. koyma)
             max_char = int(col_widths[i] / 1.8) 
             if len(text) > max_char: text = text[:max_char-2] + ".."
             pdf.cell(col_widths[i], 8, text, 1, 0, 'C')
@@ -384,8 +407,6 @@ if uploaded_file:
             trend_data['ORAN'] = (trend_data['YAPILAN'] / trend_data['HEDEF'] * 100).round(2)
             fig_line = px.line(trend_data, x='AY', y='ORAN', title="Zaman Serisi Trendi", markers=True)
             g2.plotly_chart(fig_line, use_container_width=True)
-
-            # (Isı Haritası Kaldırıldı)
 
             # --- SEKMELER ---
             st.subheader("📋 Detaylı Raporlar")
