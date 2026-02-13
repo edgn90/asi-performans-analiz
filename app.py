@@ -26,10 +26,8 @@ def to_excel(df):
 
 def create_pdf(df, title, info):
     """
-    PDF Oluşturucu - GÜNCELLENMİŞ VERSİYON
-    Düzeltmeler: 
-    1. Sayfa geçişlerinde font büyüklüğü/kalınlığı sorunu giderildi.
-    2. 'Başarı Durumu' sütununun sıkışması engellendi.
+    PDF Oluşturucu
+    Özellikler: Yatay Mod, Yönetici Özeti, Font Düzeltmesi, Sütun Sığdırma
     """
     class PDF(FPDF):
         def header(self):
@@ -106,27 +104,21 @@ def create_pdf(df, title, info):
     pdf.alias_nb_pages()
     pdf.add_page()
     
-    # --- AKILLI SÜTUN GENİŞLİĞİ HESAPLAMA (DÜZELTİLDİ) ---
+    # --- AKILLI SÜTUN GENİŞLİĞİ ---
     available_width = 275 
     max_lens = []
     
     for col in df.columns:
-        # Başlığın uzunluğu
         max_l = len(str(col))
-        
-        # İçeriğin uzunluğu (İlk 50 satıra bakarak)
         for val in df[col].head(50):
             val_l = len(str(val))
             if val_l > max_l: max_l = val_l
         
-        # --- ÖZEL AYARLAR: Sütun dengeleme ---
-        # ASM ve Birim adları çok uzun olabiliyor, bunları hesaplamada sınırlayalım ki diğerlerine yer kalsın
+        # Sütun Sınırlamaları
         if col in ['asm', 'birim', 'ASM Adı']:
             if max_l > 35: max_l = 35 
-            
-        # Başarı Durumu sütununa öncelik ver (Kesilmemesi için suni olarak büyüt)
         if col in ['Başarı Durumu', 'Durum']:
-            if max_l < 20: max_l = 25 # En az 25 karakterlik yer ayır
+            if max_l < 20: max_l = 25
             
         max_lens.append(max_l)
     
@@ -135,7 +127,7 @@ def create_pdf(df, title, info):
     if total_len > 0:
         for l in max_lens:
             w = (l / total_len) * available_width
-            if w < 20: w = 20 # Minimum genişlik
+            if w < 20: w = 20
             col_widths.append(w)
     else:
         col_widths = [available_width]
@@ -145,7 +137,7 @@ def create_pdf(df, title, info):
         factor = available_width / final_total
         col_widths = [w * factor for w in col_widths]
 
-    # --- TABLO BAŞLIKLARI (İLK SAYFA) ---
+    # --- BAŞLIKLAR ---
     pdf.set_font("Arial", 'B', 9)
     pdf.set_fill_color(220, 230, 240)
     pdf.set_text_color(0, 0, 0)
@@ -154,28 +146,21 @@ def create_pdf(df, title, info):
     pdf.ln()
 
     # --- VERİLER ---
-    # Başlangıç Fontu (Normal, 8pt)
     pdf.set_font("Arial", '', 8)
     
     for _, row in df.iterrows():
-        # Sayfa Sonu Kontrolü
         if pdf.get_y() > 175:
             pdf.add_page()
-            
-            # Yeni sayfada tablo başlıklarını tekrar çiz
             pdf.set_font("Arial", 'B', 9)
             pdf.set_fill_color(220, 230, 240)
             for i, col in enumerate(df.columns):
                 pdf.cell(col_widths[i], 10, clean_text(col), 1, 0, 'C', fill=True)
             pdf.ln()
-            
-            # --- KRİTİK DÜZELTME: Veri için fontu tekrar Normale çevir ---
-            # Bunu yapmazsak Header'dan gelen Bold ayarı veriye bulaşır.
+            # Fontu normale çek (Düzeltme)
             pdf.set_font("Arial", '', 8)
 
         for i, item in enumerate(row):
             text = clean_text(str(item))
-            # Metin sığdırma (Uzun metinleri kesip .. koyma)
             max_char = int(col_widths[i] / 1.8) 
             if len(text) > max_char: text = text[:max_char-2] + ".."
             pdf.cell(col_widths[i], 8, text, 1, 0, 'C')
@@ -212,18 +197,33 @@ if uploaded_file:
             else:
                 df = pd.read_excel(uploaded_file)
             
+            # Sütun isimlerini temizle
             df.columns = [c.strip() for c in df.columns]
+            
+            # İsim Eşleştirme Haritası
             rename_map = {
                 'ILCE': 'ilce', 'asm': 'asm', 'BIRIM_ADI': 'birim', 
                 'ASI_SON_TARIH': 'hedef_tarih', 'ASI_YAP_TARIH': 'yapilan_tarih', 'ASI_DOZU': 'doz'
             }
+            # Sadece mevcut sütunları değiştir
             df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
             
+            # --- EKSİK SÜTUN KONTROLÜ VE DÜZELTME (HATA ÇÖZÜMÜ) ---
+            # Eğer 'asm' sütunu yoksa, 'birim' sütununu kopyala
+            if 'asm' not in df.columns:
+                if 'birim' in df.columns:
+                    st.warning("⚠️ Uyarı: Yüklenen dosyada 'ASM' sütunu bulunamadı. Analiz için 'Birim Adı' (AHB) ASM olarak varsayıldı.")
+                    df['asm'] = df['birim']
+                else:
+                    df['asm'] = "Bilinmeyen ASM"
+            
+            # Doz Kontrolü
             if 'doz' in df.columns:
                 df['doz'] = pd.to_numeric(df['doz'], errors='coerce').fillna(0).astype(int)
             else:
                 df['doz'] = 1
             
+            # Tarih Formatlama
             df['hedef_tarih'] = pd.to_datetime(df['hedef_tarih'], errors='coerce')
             df['yapilan_tarih'] = pd.to_datetime(df['yapilan_tarih'], errors='coerce')
             df = df.dropna(subset=['hedef_tarih'])
@@ -270,7 +270,7 @@ if uploaded_file:
     # 5. ANALİZ
     # -----------------------------------------------------------------------------
     if submit_button:
-        with st.spinner('Hesaplanıyor...'):
+        with st.spinner('Analiz yapılıyor...'):
             temp_df = df.copy()
             if selected_ilce != "Tümü": temp_df = temp_df[temp_df['ilce'] == selected_ilce]
             if selected_asm != "Tümü": temp_df = temp_df[temp_df['asm'] == selected_asm]
@@ -311,7 +311,6 @@ if uploaded_file:
         if df_res.empty:
             st.warning("⚠️ Seçilen kriterlere uygun veri bulunamadı.")
         else:
-            # --- ANA HESAPLAMALAR ---
             total_target = len(df_res)
             total_done = df_res['basari_durumu'].sum()
             genel_oran = (total_done / total_target * 100) if total_target > 0 else 0
@@ -323,8 +322,6 @@ if uploaded_file:
             ozet['oran'] = (ozet['yapilan'] / ozet['toplam'] * 100).round(2)
             
             dusuk_oranli_sayisi = len(ozet[ozet['oran'] < m_val])
-            
-            # Metadata Güncelleme
             meta['genel_basari_orani'] = genel_oran
             meta['dusuk_birim_sayisi'] = dusuk_oranli_sayisi
             st.session_state.report_meta = meta 
@@ -346,7 +343,7 @@ if uploaded_file:
                     })
             riskli_asm_sayisi = len(riskli_asm_listesi)
             
-            # --- KPI GÖSTERİMİ ---
+            # KPI
             if meta['ilce'] != "Tümü":
                 ana_baslik = f"{meta['ilce']} - BAŞARI ORANI"
             else:
@@ -368,7 +365,7 @@ if uploaded_file:
             st.caption(f"📍 Filtre: {st.session_state.filter_info}")
             st.markdown("---")
 
-            # --- GRAFİKLER ---
+            # Grafikler
             g1, g2 = st.columns(2)
             if st.session_state.filter_info.startswith("Tümü"):
                 group_col = 'ilce'
@@ -384,7 +381,6 @@ if uploaded_file:
                 chart_data['oran'] = (chart_data['yapilan'] / chart_data['toplam'] * 100).round(2)
                 chart_data = chart_data.sort_values(by='oran', ascending=False)
                 
-                # Yeni Terminoloji
                 def get_chart_status(x):
                     if x >= t_val: return 'Başarılı'
                     elif x >= m_val: return 'Geliştirilmeli'
@@ -412,7 +408,7 @@ if uploaded_file:
             st.subheader("📋 Detaylı Raporlar")
             tab1, tab2, tab3, tab4 = st.tabs(["📊 Birim Performans", "🚦 Birim Başarı Durumu", "⚠️ Acil Müdahale Gerekenler", "🚨 Riskli ASM Listesi"])
 
-            # Sekme 1: Birim Performans (SAYISAL)
+            # Sekme 1
             with tab1:
                 ozet_num = ozet.copy()
                 if 'Durum' in ozet_num.columns: ozet_num = ozet_num.drop(columns=['Durum'])
@@ -421,11 +417,9 @@ if uploaded_file:
                 c_d1.download_button("📥 Excel İndir", data=to_excel(ozet_num), file_name='birim_perf_sayisal.xlsx')
                 c_d2.download_button("📄 PDF İndir", data=create_pdf(ozet_num, "Birim Performans (Sayisal)", meta), file_name='birim_perf_sayisal.pdf')
                 
-                st.dataframe(ozet_num, column_config={
-                    "oran": st.column_config.ProgressColumn("Başarı Oranı", format="%.2f%%", min_value=0, max_value=100)
-                }, use_container_width=True, hide_index=True)
+                st.dataframe(ozet_num, column_config={"oran": st.column_config.ProgressColumn("Başarı Oranı", format="%.2f%%", min_value=0, max_value=100)}, use_container_width=True, hide_index=True)
 
-            # Sekme 2: Birim Başarı Durumu (SADELEŞTİRİLMİŞ & ÖZEL PDF)
+            # Sekme 2
             with tab2:
                 def get_status_text(rate, target, minimum):
                     if rate >= target: return "Başarılı"
@@ -434,28 +428,25 @@ if uploaded_file:
                 
                 ozet_status = ozet.copy()
                 ozet_status['Başarı Durumu'] = ozet_status['oran'].apply(lambda x: get_status_text(x, t_val, m_val))
-                
                 cols_to_keep = ['ilce', 'asm', 'birim', 'Başarı Durumu']
                 ozet_status_final = ozet_status[cols_to_keep]
                 
                 def color_status(val):
-                    color = ''
-                    if val == "Başarılı": color = 'background-color: #d4edda; color: #155724'
-                    elif val == "Geliştirilmeli": color = 'background-color: #fff3cd; color: #856404'
-                    elif val == "Acil Müdahale": color = 'background-color: #f8d7da; color: #721c24'
-                    return color
+                    if val == "Başarılı": return 'background-color: #d4edda; color: #155724'
+                    elif val == "Geliştirilmeli": return 'background-color: #fff3cd; color: #856404'
+                    elif val == "Acil Müdahale": return 'background-color: #f8d7da; color: #721c24'
+                    return ''
 
                 c_d1, c_d2 = st.columns([1,1])
                 c_d1.download_button("📥 Excel İndir", data=to_excel(ozet_status_final), file_name='birim_basari_durumu.xlsx', key='bd_xls')
                 
-                # Özel PDF
                 meta_status = meta.copy()
                 meta_status['sadece_sayi_goster'] = True
                 c_d2.download_button("📄 PDF İndir", data=create_pdf(ozet_status_final, "Birim Basari Durumu", meta_status), file_name='birim_basari_durumu.pdf', key='bd_pdf')
                 
                 st.dataframe(ozet_status_final.style.map(color_status, subset=['Başarı Durumu']), use_container_width=True, hide_index=True)
 
-            # Sekme 3: Acil Müdahale Gerekenler
+            # Sekme 3
             with tab3:
                 low = ozet[ozet['oran'] < m_val].sort_values(by='oran')
                 c_d1, c_d2 = st.columns([1,1])
@@ -463,7 +454,7 @@ if uploaded_file:
                 c_d2.download_button("📄 PDF İndir", data=create_pdf(low, "Acil Mudahale Gereken Birimler", meta), file_name='acil_mudahale_birimler.pdf', key='dp1')
                 st.dataframe(low, column_config={"oran": st.column_config.NumberColumn("Başarı", format="%.2f%%")}, use_container_width=True, hide_index=True)
 
-            # Sekme 4: Riskli ASM
+            # Sekme 4
             with tab4:
                 rdf = pd.DataFrame(riskli_asm_listesi)
                 if not rdf.empty:
