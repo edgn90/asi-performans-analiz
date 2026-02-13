@@ -25,27 +25,22 @@ def clean_turkish_chars(text):
 def extract_key_from_unit_name(text):
     """Birim adından (Örn: 'İst. Kadıköy 5 Nolu AHB') ortak bir anahtar (KADIKOY-5) üretir."""
     text = clean_turkish_chars(text)
-    # Şehir adını temizle (Başlangıçtaki)
+    # Şehir adını temizle
     text = re.sub(r'^ISTANBUL\s+', '', text)
     # Numara ve 'NOLU' ifadesini bul
-    # Örnek: "KADIKOY 15 NOLU" -> 15
     match = re.search(r'(\d+)\s*NOLU', text)
     if match:
-        number = int(match.group(1)) # 057 ile 57 aynı olsun diye int'e çevir
-        # Numaradan önceki kısım ilçedir (Genellikle)
+        number = int(match.group(1)) 
         district_part = text[:match.start()].strip()
-        # Anahtar oluştur: ILCE-NO (Örn: UMRANIYE-135)
         return f"{district_part}-{number}"
     return None
 
 @st.cache_data
 def load_asm_mapping():
     """Dizindeki ASM dosyasını arar ve eşleştirme sözlüğünü hazırlar."""
-    # Tanınacak dosya isimleri
     possible_files = ["ASM.xlsx", "ASM.csv", "ASM.xlsx - Sayfa1.csv", "asm_listesi.xlsx"]
     df_asm = None
     
-    # Dosyayı bulmaya çalış
     for f in possible_files:
         if os.path.exists(f):
             try:
@@ -53,7 +48,6 @@ def load_asm_mapping():
                     df_asm = pd.read_excel(f)
                 else:
                     df_asm = pd.read_csv(f)
-                # st.success(f"ASM Eşleştirme dosyası yüklendi: {f}") # İsteğe bağlı bilgi
                 break
             except:
                 continue
@@ -61,12 +55,8 @@ def load_asm_mapping():
     if df_asm is None:
         return None
 
-    # Eşleştirme Sözlüğünü Oluştur
-    # Beklenen sütunlar: 'Birim Adı', 'Aile Sağlığı Merkezi Adı'
-    # Sütun isimlerini normalize et (Birim Adı, BIRIM ADI vb.)
+    # Sütun temizliği ve tespiti
     df_asm.columns = [c.strip() for c in df_asm.columns]
-    
-    # Doğru sütunları bul
     col_birim = next((c for c in df_asm.columns if 'birim' in c.lower() and 'ad' in c.lower()), None)
     col_asm = next((c for c in df_asm.columns if 'aile' in c.lower() and 'merkez' in c.lower()), None)
     
@@ -97,10 +87,7 @@ def to_excel(df):
     return output.getvalue()
 
 def create_pdf(df, title, info):
-    """
-    PDF Oluşturucu
-    Özellikler: Yatay Mod, Yönetici Özeti, Font Düzeltmesi
-    """
+    """PDF Oluşturucu"""
     class PDF(FPDF):
         def header(self):
             try: self.image('logo.png', 10, 8, 33)
@@ -264,34 +251,25 @@ if uploaded_file:
             df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
             
             # --- EKSİK ASM EŞLEŞTİRME ---
-            # 1. Önce ASM Haritasını Yükle
             asm_map = load_asm_mapping()
             
-            # 2. Eğer harita varsa, 'birim' üzerinden 'asm' sütununu doldur/güncelle
             if asm_map and 'birim' in df.columns:
-                # Geçici anahtar sütunu oluştur
                 df['temp_key'] = df['birim'].apply(lambda x: extract_key_from_unit_name(str(x)))
-                # Eşleştirme yap
                 df['mapped_asm'] = df['temp_key'].map(asm_map)
                 
-                # Eğer 'asm' sütunu hiç yoksa, mapped_asm'yi kullan
                 if 'asm' not in df.columns:
                     df['asm'] = df['mapped_asm']
                 else:
-                    # 'asm' varsa ama boşsa, mapped_asm ile doldur
                     df['asm'] = df['asm'].fillna(df['mapped_asm'])
                 
-                # Temizlik
                 df = df.drop(columns=['temp_key', 'mapped_asm'], errors='ignore')
 
-            # 3. Hala ASM yoksa "Belirtilmemiş" yap
             if 'asm' not in df.columns:
                 st.warning("⚠️ Dosyada ASM sütunu yok ve eşleştirme dosyası (ASM.xlsx) bulunamadı.")
                 df['asm'] = "Belirtilmemiş"
             else:
                 df['asm'] = df['asm'].fillna("Belirtilmemiş")
 
-            # Doz ve Tarih İşlemleri
             if 'doz' in df.columns:
                 df['doz'] = pd.to_numeric(df['doz'], errors='coerce').fillna(0).astype(int)
             else:
@@ -454,8 +432,9 @@ if uploaded_file:
 
                 chart_data['Durum'] = chart_data['oran'].apply(get_chart_status)
                 
+                # --- RENK GÜNCELLEMESİ (MAVİ) ---
                 fig_bar = px.bar(chart_data, x=group_col, y='oran', color='Durum', 
-                                 color_discrete_map={'Başarılı':'#198754', 'Geliştirilmeli':'#ffc107', 'Acil Müdahale':'#dc3545'},
+                                 color_discrete_map={'Başarılı':'#0d6efd', 'Geliştirilmeli':'#ffc107', 'Acil Müdahale':'#dc3545'},
                                  text='oran', title=f"Performans Dağılımı ({x_label})", height=chart_height)
                 
                 fig_bar.update_layout(xaxis_title=x_label, yaxis_title="Başarı Oranı (%)")
@@ -476,7 +455,6 @@ if uploaded_file:
             with tab1:
                 ozet_num = ozet.copy()
                 if 'Durum' in ozet_num.columns: ozet_num = ozet_num.drop(columns=['Durum'])
-                
                 c_d1, c_d2 = st.columns([1,1])
                 c_d1.download_button("📥 Excel İndir", data=to_excel(ozet_num), file_name='birim_perf_sayisal.xlsx')
                 c_d2.download_button("📄 PDF İndir", data=create_pdf(ozet_num, "Birim Performans (Sayisal)", meta), file_name='birim_perf_sayisal.pdf')
@@ -493,8 +471,9 @@ if uploaded_file:
                 cols_to_keep = ['ilce', 'asm', 'birim', 'Başarı Durumu']
                 ozet_status_final = ozet_status[cols_to_keep]
                 
+                # --- RENK GÜNCELLEMESİ (MAVİ) ---
                 def color_status(val):
-                    if val == "Başarılı": return 'background-color: #d4edda; color: #155724'
+                    if val == "Başarılı": return 'background-color: #cfe2ff; color: #084298' # Mavi
                     elif val == "Geliştirilmeli": return 'background-color: #fff3cd; color: #856404'
                     elif val == "Acil Müdahale": return 'background-color: #f8d7da; color: #721c24'
                     return ''
