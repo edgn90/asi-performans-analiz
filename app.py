@@ -23,11 +23,9 @@ def clean_turkish_chars(text):
     return text.upper()
 
 def extract_key_from_unit_name(text):
-    """Birim adından (Örn: 'İst. Kadıköy 5 Nolu AHB') ortak bir anahtar (KADIKOY-5) üretir."""
+    """Birim adından ortak bir anahtar (KADIKOY-5) üretir."""
     text = clean_turkish_chars(text)
-    # Şehir adını temizle
     text = re.sub(r'^ISTANBUL\s+', '', text)
-    # Numara ve 'NOLU' ifadesini bul
     match = re.search(r'(\d+)\s*NOLU', text)
     if match:
         number = int(match.group(1)) 
@@ -55,7 +53,6 @@ def load_asm_mapping():
     if df_asm is None:
         return None
 
-    # Sütun temizliği ve tespiti
     df_asm.columns = [c.strip() for c in df_asm.columns]
     col_birim = next((c for c in df_asm.columns if 'birim' in c.lower() and 'ad' in c.lower()), None)
     col_asm = next((c for c in df_asm.columns if 'aile' in c.lower() and 'merkez' in c.lower()), None)
@@ -156,7 +153,6 @@ def create_pdf(df, title, info):
     pdf.alias_nb_pages()
     pdf.add_page()
     
-    # Sütun Genişliği
     available_width = 275 
     max_lens = []
     for col in df.columns:
@@ -185,7 +181,6 @@ def create_pdf(df, title, info):
         factor = available_width / final_total
         col_widths = [w * factor for w in col_widths]
 
-    # Başlıklar
     pdf.set_font("Arial", 'B', 9)
     pdf.set_fill_color(220, 230, 240)
     pdf.set_text_color(0, 0, 0)
@@ -193,7 +188,6 @@ def create_pdf(df, title, info):
         pdf.cell(col_widths[i], 10, clean_text(col), 1, 0, 'C', fill=True)
     pdf.ln()
 
-    # Veriler
     pdf.set_font("Arial", '', 8)
     for _, row in df.iterrows():
         if pdf.get_y() > 175:
@@ -227,28 +221,40 @@ st.title("📊 Aşı Takip & Performans Dashboard")
 st.markdown("---")
 
 # -----------------------------------------------------------------------------
-# 3. VERİ YÜKLEME
+# 3. VERİ YÜKLEME (ÇOKLU DOSYA DESTEĞİ)
 # -----------------------------------------------------------------------------
 st.sidebar.header("1. Veri Yükleme")
-uploaded_file = st.sidebar.file_uploader("Excel veya CSV Yükleyin", type=["xlsx", "csv"], key="loader_main")
+# accept_multiple_files=True parametresi eklendi
+uploaded_files = st.sidebar.file_uploader("Excel veya CSV Yükleyin", type=["xlsx", "csv"], accept_multiple_files=True, key="loader_main")
 
 if 'filtered_df' not in st.session_state: st.session_state.filtered_df = pd.DataFrame()
 if 'has_run' not in st.session_state: st.session_state.has_run = False
 
-if uploaded_file:
-    if 'raw_data' not in st.session_state or st.session_state.get('file_name') != uploaded_file.name:
+if uploaded_files:
+    # Yüklenen dosyaların isimlerini liste olarak al
+    current_file_names = [f.name for f in uploaded_files]
+    
+    # Eğer yeni bir dosya listesi geldiyse yeniden oku
+    if 'raw_data' not in st.session_state or st.session_state.get('file_names') != current_file_names:
         try:
-            if uploaded_file.name.endswith('.csv'):
-                df = pd.read_csv(uploaded_file, encoding='cp1254')
-            else:
-                df = pd.read_excel(uploaded_file)
+            all_dfs = []
+            # Her bir dosyayı döngü ile oku ve listeye ekle
+            for uploaded_file in uploaded_files:
+                if uploaded_file.name.endswith('.csv'):
+                    temp_df = pd.read_csv(uploaded_file, encoding='cp1254')
+                else:
+                    temp_df = pd.read_excel(uploaded_file)
+                
+                temp_df.columns = [c.strip() for c in temp_df.columns]
+                rename_map = {
+                    'ILCE': 'ilce', 'asm': 'asm', 'BIRIM_ADI': 'birim', 
+                    'ASI_SON_TARIH': 'hedef_tarih', 'ASI_YAP_TARIH': 'yapilan_tarih', 'ASI_DOZU': 'doz'
+                }
+                temp_df = temp_df.rename(columns={k: v for k, v in rename_map.items() if k in temp_df.columns})
+                all_dfs.append(temp_df)
             
-            df.columns = [c.strip() for c in df.columns]
-            rename_map = {
-                'ILCE': 'ilce', 'asm': 'asm', 'BIRIM_ADI': 'birim', 
-                'ASI_SON_TARIH': 'hedef_tarih', 'ASI_YAP_TARIH': 'yapilan_tarih', 'ASI_DOZU': 'doz'
-            }
-            df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
+            # Tüm dataframe'leri tek bir veri setinde birleştir
+            df = pd.concat(all_dfs, ignore_index=True)
             
             # --- EKSİK ASM EŞLEŞTİRME ---
             asm_map = load_asm_mapping()
@@ -265,7 +271,7 @@ if uploaded_file:
                 df = df.drop(columns=['temp_key', 'mapped_asm'], errors='ignore')
 
             if 'asm' not in df.columns:
-                st.warning("⚠️ Dosyada ASM sütunu yok ve eşleştirme dosyası (ASM.xlsx) bulunamadı.")
+                st.warning("⚠️ Yüklenen dosyalarda ASM sütunu yok ve eşleştirme dosyası (ASM.xlsx) bulunamadı.")
                 df['asm'] = "Belirtilmemiş"
             else:
                 df['asm'] = df['asm'].fillna("Belirtilmemiş")
@@ -280,7 +286,7 @@ if uploaded_file:
             df = df.dropna(subset=['hedef_tarih'])
             
             st.session_state.raw_data = df
-            st.session_state.file_name = uploaded_file.name
+            st.session_state.file_names = current_file_names # Liste olarak kaydet
         except Exception as e:
             st.error(f"Dosya okuma hatası: {e}")
             st.stop()
@@ -432,7 +438,6 @@ if uploaded_file:
 
                 chart_data['Durum'] = chart_data['oran'].apply(get_chart_status)
                 
-                # --- RENK GÜNCELLEMESİ (MAVİ) ---
                 fig_bar = px.bar(chart_data, x=group_col, y='oran', color='Durum', 
                                  color_discrete_map={'Başarılı':'#0d6efd', 'Geliştirilmeli':'#ffc107', 'Acil Müdahale':'#dc3545'},
                                  text='oran', title=f"Performans Dağılımı ({x_label})", height=chart_height)
@@ -471,9 +476,8 @@ if uploaded_file:
                 cols_to_keep = ['ilce', 'asm', 'birim', 'Başarı Durumu']
                 ozet_status_final = ozet_status[cols_to_keep]
                 
-                # --- RENK GÜNCELLEMESİ (MAVİ) ---
                 def color_status(val):
-                    if val == "Başarılı": return 'background-color: #cfe2ff; color: #084298' # Mavi
+                    if val == "Başarılı": return 'background-color: #cfe2ff; color: #084298'
                     elif val == "Geliştirilmeli": return 'background-color: #fff3cd; color: #856404'
                     elif val == "Acil Müdahale": return 'background-color: #f8d7da; color: #721c24'
                     return ''
@@ -506,4 +510,4 @@ if uploaded_file:
     else:
         st.info("👈 Analizi başlatmak için soldaki menüden **'Filtreleri Uygula'** butonuna basınız.")
 else:
-    st.info("⬅️ Lütfen sol menüden Excel dosyanızı yükleyerek başlayın.")
+    st.info("⬅️ Lütfen sol menüden Excel dosyanızı(veya dosyalarınızı) yükleyerek başlayın.")
