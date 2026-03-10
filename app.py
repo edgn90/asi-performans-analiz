@@ -100,9 +100,10 @@ def create_pdf(df, title, info):
             date_str = f"Tarih: {info.get('tarih_araligi', '-')}"
             ilce_txt = info.get('ilce', '-') if info.get('ilce') != "Tümü" else "Tum Ilceler"
             asm_txt = info.get('asm', '-') if info.get('asm') != "Tümü" else "Tum ASM'ler"
+            asi_txt = info.get('asi', 'Tümü')
             doz_txt = info.get('doz', '-') if info.get('doz') else "Tum Dozlar"
             
-            filter_str = f"Konum: {ilce_txt} / {asm_txt} | Asi: {doz_txt}"
+            filter_str = f"Konum: {ilce_txt} / {asm_txt} | Asi: {asi_txt} (Doz: {doz_txt})"
             threshold_str = f"Hedef: %{info.get('hedef', 90)} | Alt Sinir: %{info.get('alt_sinir', 70)}"
 
             self.ln(2)
@@ -224,21 +225,17 @@ st.markdown("---")
 # 3. VERİ YÜKLEME (ÇOKLU DOSYA DESTEĞİ)
 # -----------------------------------------------------------------------------
 st.sidebar.header("1. Veri Yükleme")
-# accept_multiple_files=True parametresi eklendi
 uploaded_files = st.sidebar.file_uploader("Excel veya CSV Yükleyin", type=["xlsx", "csv"], accept_multiple_files=True, key="loader_main")
 
 if 'filtered_df' not in st.session_state: st.session_state.filtered_df = pd.DataFrame()
 if 'has_run' not in st.session_state: st.session_state.has_run = False
 
 if uploaded_files:
-    # Yüklenen dosyaların isimlerini liste olarak al
     current_file_names = [f.name for f in uploaded_files]
     
-    # Eğer yeni bir dosya listesi geldiyse yeniden oku
     if 'raw_data' not in st.session_state or st.session_state.get('file_names') != current_file_names:
         try:
             all_dfs = []
-            # Her bir dosyayı döngü ile oku ve listeye ekle
             for uploaded_file in uploaded_files:
                 if uploaded_file.name.endswith('.csv'):
                     temp_df = pd.read_csv(uploaded_file, encoding='cp1254')
@@ -246,14 +243,16 @@ if uploaded_files:
                     temp_df = pd.read_excel(uploaded_file)
                 
                 temp_df.columns = [c.strip() for c in temp_df.columns]
+                
+                # ASI_ADI eklendi
                 rename_map = {
                     'ILCE': 'ilce', 'asm': 'asm', 'BIRIM_ADI': 'birim', 
-                    'ASI_SON_TARIH': 'hedef_tarih', 'ASI_YAP_TARIH': 'yapilan_tarih', 'ASI_DOZU': 'doz'
+                    'ASI_SON_TARIH': 'hedef_tarih', 'ASI_YAP_TARIH': 'yapilan_tarih', 
+                    'ASI_DOZU': 'doz', 'ASI_ADI': 'asi'
                 }
                 temp_df = temp_df.rename(columns={k: v for k, v in rename_map.items() if k in temp_df.columns})
                 all_dfs.append(temp_df)
             
-            # Tüm dataframe'leri tek bir veri setinde birleştir
             df = pd.concat(all_dfs, ignore_index=True)
             
             # --- EKSİK ASM EŞLEŞTİRME ---
@@ -286,7 +285,7 @@ if uploaded_files:
             df = df.dropna(subset=['hedef_tarih'])
             
             st.session_state.raw_data = df
-            st.session_state.file_names = current_file_names # Liste olarak kaydet
+            st.session_state.file_names = current_file_names
         except Exception as e:
             st.error(f"Dosya okuma hatası: {e}")
             st.stop()
@@ -298,18 +297,30 @@ if uploaded_files:
     # -----------------------------------------------------------------------------
     st.sidebar.header("2. Filtre Ayarları")
     with st.sidebar.form(key='filter_form'):
+        
+        # İlçe Filtresi
         ilce_list = ["Tümü"] + sorted(df['ilce'].astype(str).unique().tolist())
         selected_ilce = st.selectbox("İlçe Seç", ilce_list)
         
+        # ASM Filtresi
         if selected_ilce != "Tümü": asm_source = df[df['ilce'] == selected_ilce]
         else: asm_source = df
         
         asm_list = ["Tümü"] + sorted(asm_source['asm'].astype(str).unique().tolist())
         selected_asm = st.selectbox("ASM Seç", asm_list)
 
+        # Aşı Filtresi (YENİ)
+        if 'asi' in df.columns:
+            asi_list = sorted(df['asi'].astype(str).unique().tolist())
+            selected_asilar = st.multiselect("Aşı Seçin", options=asi_list, default=[])
+        else:
+            selected_asilar = []
+
+        # Doz Filtresi
         dose_options = list(range(1, 10))
         selected_doses = st.multiselect("Aşı Dozu Seçin", options=dose_options, default=[])
 
+        # Tarih Filtresi
         if not df.empty:
             min_date = df['hedef_tarih'].min().date()
             max_date = df['hedef_tarih'].max().date()
@@ -331,6 +342,7 @@ if uploaded_files:
             temp_df = df.copy()
             if selected_ilce != "Tümü": temp_df = temp_df[temp_df['ilce'] == selected_ilce]
             if selected_asm != "Tümü": temp_df = temp_df[temp_df['asm'] == selected_asm]
+            if selected_asilar: temp_df = temp_df[temp_df['asi'].isin(selected_asilar)] # AŞI FİLTRESİ
             if selected_doses: temp_df = temp_df[temp_df['doz'].isin(selected_doses)]
             
             if isinstance(date_range, list) and len(date_range) == 2:
@@ -343,16 +355,17 @@ if uploaded_files:
             if isinstance(date_range, list) and len(date_range) == 2:
                 date_str = f"{date_range[0].strftime('%d.%m.%Y')} - {date_range[1].strftime('%d.%m.%Y')}"
             
+            asi_str = ", ".join(map(str, selected_asilar)) if selected_asilar else "Tümü"
             dose_str = ", ".join(map(str, selected_doses)) if selected_doses else ""
             
             st.session_state.filtered_df = temp_df
-            st.session_state.filter_info = f"{selected_ilce} / {selected_asm}"
+            st.session_state.filter_info = f"{selected_ilce} / {selected_asm} | Aşı: {asi_str}"
             st.session_state.target_val = target_val
             st.session_state.min_val = min_val
             
             st.session_state.report_meta = {
                 "tarih_araligi": date_str, "ilce": selected_ilce, "asm": selected_asm,
-                "doz": dose_str, "hedef": target_val, "alt_sinir": min_val
+                "asi": asi_str, "doz": dose_str, "hedef": target_val, "alt_sinir": min_val
             }
             st.session_state.has_run = True
 
